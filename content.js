@@ -42,110 +42,59 @@ async function getTranscript() {
   }
 }
 
-// Enhanced function to create 5-minute chunks with context preservation
-function create5MinuteChunks(transcript) {
-  const chunks = [];
-  const CHUNK_DURATION = 300; // 5 minutes = 300 seconds per chunk
-  const CONTEXT_OVERLAP = 30; // 30 seconds of overlap for context preservation
-  const DEMO_LIMIT_MINUTES = 20; // DEMO LIMIT: Only analyze first 20 minutes (4 chunks)
+// Function to prepare full transcript for analysis (limited to 20 minutes)
+function prepareFullTranscript(transcript) {
+  const DEMO_LIMIT_MINUTES = 20; // DEMO LIMIT: Only analyze first 20 minutes
   
   if (!transcript || transcript.length === 0) {
-    return chunks;
+    return null;
   }
   
   // Sort transcript by start time to ensure proper ordering
   const sortedTranscript = [...transcript].sort((a, b) => a.start - b.start);
   
-  // Get the total duration but apply demo limit
-  const lastSegment = sortedTranscript[sortedTranscript.length - 1];
-  const totalDuration = lastSegment.start + (lastSegment.duration || 5);
-  
   // Apply demo limit - only analyze first 20 minutes
-  const limitedDuration = Math.min(totalDuration, DEMO_LIMIT_MINUTES * 60);
-  const actualChunks = Math.ceil(limitedDuration / CHUNK_DURATION);
+  const limitedDuration = DEMO_LIMIT_MINUTES * 60; // 20 minutes in seconds
+  const filteredTranscript = sortedTranscript.filter(segment => 
+    segment.start < limitedDuration
+  );
   
-  console.log(`📊 Creating 5-minute chunks for ${actualChunks} chunks of content (DEMO LIMIT: 20 minutes max)`);
-  console.log(`📊 Original video duration: ${Math.ceil(totalDuration / 60)} minutes, analyzing: ${Math.ceil(limitedDuration / 60)} minutes`);
-  
-  // Create chunks every 5 minutes (limited to 20 minutes)
-  for (let startTime = 0; startTime < limitedDuration; startTime += CHUNK_DURATION) {
-    const endTime = Math.min(startTime + CHUNK_DURATION, limitedDuration);
-    const contextStartTime = Math.max(0, startTime - CONTEXT_OVERLAP);
-    const contextEndTime = Math.min(endTime + CONTEXT_OVERLAP, limitedDuration);
-    
-    // Get segments for this time window (with context)
-    const contextSegments = sortedTranscript.filter(segment => 
-      segment.start >= contextStartTime && segment.start < contextEndTime
-    );
-    
-    // Get main segments (without context overlap)
-    const mainSegments = sortedTranscript.filter(segment => 
-      segment.start >= startTime && segment.start < endTime
-    );
-    
-    if (mainSegments.length === 0) {
-      continue; // Skip empty chunks
-    }
-    
-    // Build the text with context markers
-    let chunkText = '';
-    let mainText = '';
-    let segmentTimestamps = [];
-    
-    // Add context before (if any)
-    const beforeContext = contextSegments.filter(s => s.start < startTime);
-    if (beforeContext.length > 0) {
-      const contextText = beforeContext.map(s => s.text).join(' ');
-      chunkText += `[Context: ${contextText}] `;
-    }
-    
-    // Add main content with detailed timestamp tracking
-    for (const segment of mainSegments) {
-      const segmentText = segment.text.trim();
-      if (segmentText) {
-        mainText += (mainText ? ' ' : '') + segmentText;
-        segmentTimestamps.push({
-          text: segmentText,
-          timestamp: segment.start,
-          isMain: true,
-          words: segmentText.split(' ').map(word => word.toLowerCase())
-        });
-      }
-    }
-    
-    chunkText += mainText;
-    
-    // Add context after (if any)
-    const afterContext = contextSegments.filter(s => s.start >= endTime);
-    if (afterContext.length > 0) {
-      const contextText = afterContext.map(s => s.text).join(' ');
-      chunkText += ` [Context: ${contextText}]`;
-    }
-    
-    // Create chunk with enhanced metadata
-    const chunkStartTime = mainSegments[0].start;
-    const chunkEndTime = mainSegments[mainSegments.length - 1].start;
-    const startMinutes = Math.floor(chunkStartTime / 60);
-    const startSeconds = Math.floor(chunkStartTime % 60);
-    const endMinutes = Math.floor(chunkEndTime / 60);
-    const endSeconds = Math.floor(chunkEndTime % 60);
-    
-    chunks.push({
-      text: chunkText.trim(),
-      mainText: mainText.trim(), // Text without context markers
-      startTimestamp: `${startMinutes}:${startSeconds.toString().padStart(2, '0')}`,
-      endTimestamp: `${endMinutes}:${endSeconds.toString().padStart(2, '0')}`,
-      startTime: chunkStartTime,
-      endTime: chunkEndTime,
-      segmentTimestamps: segmentTimestamps,
-      chunkIndex: chunks.length + 1,
-      timeWindow: `${startMinutes}:${startSeconds.toString().padStart(2, '0')} - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`,
-      hasContext: beforeContext.length > 0 || afterContext.length > 0
-    });
+  if (filteredTranscript.length === 0) {
+    return null;
   }
   
-  console.log(`✅ Created ${chunks.length} 5-minute chunks with context preservation (DEMO LIMITED to ${actualChunks} chunks)`);
-  return chunks;
+  console.log(`📊 Preparing full transcript analysis for ${DEMO_LIMIT_MINUTES} minutes`);
+  console.log(`📊 Processing ${filteredTranscript.length} transcript segments`);
+  
+  // Build the full text and segment timestamps
+  let fullText = '';
+  let segmentTimestamps = [];
+  
+  for (const segment of filteredTranscript) {
+    const segmentText = segment.text.trim();
+    if (segmentText) {
+      fullText += (fullText ? ' ' : '') + segmentText;
+      segmentTimestamps.push({
+        text: segmentText,
+        timestamp: segment.start,
+        words: segmentText.split(' ').map(word => word.toLowerCase())
+      });
+    }
+  }
+  
+  const startTime = filteredTranscript[0].start;
+  const endTime = Math.min(filteredTranscript[filteredTranscript.length - 1].start, limitedDuration);
+  const endMinutes = Math.floor(endTime / 60);
+  const endSeconds = Math.floor(endTime % 60);
+  
+  return {
+    text: fullText.trim(),
+    startTime: startTime,
+    endTime: endTime,
+    segmentTimestamps: segmentTimestamps,
+    timeWindow: `0:00 - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`,
+    totalSegments: filteredTranscript.length
+  };
 }
 
 // Function to get cached analysis results
@@ -176,43 +125,18 @@ async function getCachedAnalysis(videoId) {
   }
 }
 
-// Function to save analysis results to cache with incremental updates
-async function saveAnalysisToCache(videoId, analysisText, lies = [], isIncremental = false) {
+// Function to save analysis results to cache
+async function saveAnalysisToCache(videoId, analysisText, lies = []) {
   try {
-    let cacheData;
-    
-    if (isIncremental) {
-      // Get existing cache and append new data
-      const existing = await getCachedAnalysis(videoId);
-      if (existing) {
-        cacheData = {
-          ...existing,
-          analysis: existing.analysis + '\n\n' + analysisText,
-          claims: [...(existing.claims || []), ...lies],
-          lastUpdated: Date.now()
-        };
-      } else {
-        cacheData = {
-          analysis: analysisText,
-          claims: lies,
-          timestamp: Date.now(),
-          videoId: videoId,
-          processed: Date.now(),
-          version: '2.1',
-          lastUpdated: Date.now()
-        };
-      }
-    } else {
-      cacheData = {
-        analysis: analysisText,
-        claims: lies,
-        timestamp: Date.now(),
-        videoId: videoId,
-        processed: Date.now(),
-        version: '2.1',
-        lastUpdated: Date.now()
-      };
-    }
+    const cacheData = {
+      analysis: analysisText,
+      claims: lies,
+      timestamp: Date.now(),
+      videoId: videoId,
+      processed: Date.now(),
+      version: '2.1',
+      lastUpdated: Date.now()
+    };
     
     await chrome.storage.local.set({
       [`analysis_${videoId}`]: cacheData
@@ -257,7 +181,7 @@ async function cleanOldCache() {
   }
 }
 
-// Enhanced system prompt function focused on lies detection with 5-minute chunks
+// Enhanced system prompt function focused on lies detection for full video analysis
 function buildSystemPrompt(sensitivity) {
   const baseSensitivity = {
     conservative: {
@@ -291,15 +215,15 @@ LIES DETECTION CRITERIA:
 - Require ${config.threshold} before flagging anything
 - Consider the potential impact and reach of the misinformation
 
-5-MINUTE CHUNK ANALYSIS INSTRUCTIONS:
-- You are analyzing approximately 5 minutes of video content at a time
-- Context from adjacent chunks is provided in [Context: ...] markers - use this for understanding but don't fact-check context content
-- Focus your fact-checking on the main content (outside context markers)
-- The content represents a continuous conversation/presentation, so consider the flow of ideas
-- Each chunk covers a substantial portion of content, allowing for comprehensive analysis
+FULL VIDEO ANALYSIS INSTRUCTIONS:
+- You are analyzing the complete video transcript (up to 20 minutes)
+- The content represents a continuous conversation/presentation
+- Analyze the entire flow of ideas and context comprehensively
+- Look for patterns of misinformation throughout the video
+- Consider how lies may build upon each other or contradict established facts
 
 TIMESTAMP AND DURATION INSTRUCTIONS:
-- You will receive text with a time window (e.g., "5:30 - 10:30" for a 5-minute chunk)
+- You will receive text with a time window (e.g., "0:00 - 20:00" for full video)
 - When you identify a lie, provide the EXACT timestamp when the lie BEGINS
 - ALWAYS provide "timestamp" (MM:SS format), "timeInSeconds" (total seconds), and "duration" (seconds) for each lie
 - Duration should reflect how long the false claim is being made (typically 5-30 seconds)
@@ -323,7 +247,6 @@ GUIDELINES:
 - Consider the context and speaker's intent
 - Prioritize claims with high harm potential
 - Use the provided segment timestamps for accurate timing
-- Don't fact-check content within [Context: ...] markers
 - If no lies are found, return an empty claims array
 - Keep explanations brief and factual
 - ENSURE timestamps and durations are accurate to when the lie STARTS being spoken
@@ -344,10 +267,9 @@ Example response:
 }`;
 }
 
-// Enhanced function to find the best timestamp for a claim within a chunk
-function findClaimTimestamp(claim, chunk) {
+// Enhanced function to find the best timestamp for a claim within the transcript
+function findClaimTimestamp(claim, transcriptSegments) {
   console.log(`🔍 Finding timestamp for claim: "${claim}"`);
-  console.log(`🔍 Chunk time window: ${chunk.timeWindow}`);
   
   // Extract key words from the claim (remove common words)
   const commonWords = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those'];
@@ -358,14 +280,12 @@ function findClaimTimestamp(claim, chunk) {
   
   console.log(`🔍 Key words from claim: ${claimWords.join(', ')}`);
   
-  // Look for the claim text in the segment timestamps (main content only)
-  let bestMatch = chunk.startTime;
+  // Look for the claim text in the transcript segments
+  let bestMatch = transcriptSegments[0]?.timestamp || 0;
   let bestScore = 0;
   let bestSegment = null;
   
-  for (const segment of chunk.segmentTimestamps || []) {
-    if (!segment.isMain) continue; // Skip context segments
-    
+  for (const segment of transcriptSegments) {
     const segmentText = segment.text.toLowerCase();
     let score = 0;
     
@@ -398,10 +318,10 @@ function findClaimTimestamp(claim, chunk) {
     }
   }
   
-  // If no good match found, use the start of the chunk (not middle)
+  // If no good match found, use the start of the transcript
   if (bestScore === 0) {
-    bestMatch = chunk.startTime;
-    console.log(`🔍 No good match found, using chunk start: ${bestMatch}s`);
+    bestMatch = transcriptSegments[0]?.timestamp || 0;
+    console.log(`🔍 No good match found, using transcript start: ${bestMatch}s`);
   } else {
     console.log(`🔍 Best match found in segment: "${bestSegment.text}" at ${bestMatch}s (score: ${bestScore})`);
   }
@@ -409,9 +329,16 @@ function findClaimTimestamp(claim, chunk) {
   return Math.round(bestMatch);
 }
 
-// Function to analyze lies in text with enhanced 5-minute chunk processing
-async function analyzeLies(text, timeWindow, sensitivity = 'balanced', chunk = null) {
+// Function to analyze lies in full transcript with progress tracking
+async function analyzeLies(transcriptData, sensitivity = 'balanced') {
   try {
+    // Send progress update
+    chrome.runtime.sendMessage({
+      type: 'analysisProgress',
+      stage: 'ai_processing',
+      message: 'Sending transcript to AI for analysis...'
+    });
+
     // Get AI provider and model settings
     const settings = await chrome.storage.sync.get(['aiProvider', 'openaiModel', 'geminiModel']);
     const provider = settings.aiProvider || 'openai';
@@ -436,12 +363,19 @@ async function analyzeLies(text, timeWindow, sensitivity = 'balanced', chunk = n
     }
 
     console.log('Analyzing lies with sensitivity:', sensitivity);
-    console.log('Time window:', timeWindow);
+    console.log('Time window:', transcriptData.timeWindow);
     console.log(`Using ${provider} model:`, model);
     
     const systemPrompt = buildSystemPrompt(sensitivity);
-    const userContent = `Time Window: ${timeWindow}\n\nTranscript: ${text}`;
+    const userContent = `Time Window: ${transcriptData.timeWindow}\n\nTranscript: ${transcriptData.text}`;
     
+    // Send progress update
+    chrome.runtime.sendMessage({
+      type: 'analysisProgress',
+      stage: 'ai_request',
+      message: `Analyzing ${transcriptData.totalSegments} segments with ${provider}...`
+    });
+
     let response;
     
     if (provider === 'openai') {
@@ -482,6 +416,13 @@ async function analyzeLies(text, timeWindow, sensitivity = 'balanced', chunk = n
       throw new Error(`HTTP error! status: ${response.status}`);
     }
 
+    // Send progress update
+    chrome.runtime.sendMessage({
+      type: 'analysisProgress',
+      stage: 'processing_response',
+      message: 'Processing AI response...'
+    });
+
     const data = await response.json();
     let content;
     
@@ -498,7 +439,7 @@ async function analyzeLies(text, timeWindow, sensitivity = 'balanced', chunk = n
         const parsedResult = JSON.parse(jsonMatch[0]);
         
         // Post-process lies to ensure accurate timestamps and durations
-        if (parsedResult.claims && chunk) {
+        if (parsedResult.claims && transcriptData.segmentTimestamps) {
           parsedResult.claims = parsedResult.claims.map(claim => {
             let finalTimeInSeconds;
             let finalTimestamp;
@@ -506,18 +447,18 @@ async function analyzeLies(text, timeWindow, sensitivity = 'balanced', chunk = n
             
             // CRITICAL FIX: Ensure we use the START timestamp, not adjusted by duration
             if (claim.timeInSeconds && claim.timeInSeconds > 0) {
-              // Check if the AI timestamp is within the chunk bounds
-              if (claim.timeInSeconds >= chunk.startTime && claim.timeInSeconds <= chunk.endTime) {
+              // Check if the AI timestamp is within the transcript bounds
+              if (claim.timeInSeconds >= transcriptData.startTime && claim.timeInSeconds <= transcriptData.endTime) {
                 finalTimeInSeconds = Math.round(claim.timeInSeconds);
-                console.log(`✅ AI provided valid timestamp: ${finalTimeInSeconds}s (within chunk bounds ${chunk.startTime}-${chunk.endTime}s)`);
+                console.log(`✅ AI provided valid timestamp: ${finalTimeInSeconds}s (within bounds ${transcriptData.startTime}-${transcriptData.endTime}s)`);
               } else {
-                console.log(`⚠️ AI timestamp ${claim.timeInSeconds}s outside chunk bounds (${chunk.startTime}-${chunk.endTime}s), finding better match`);
-                finalTimeInSeconds = findClaimTimestamp(claim.claim, chunk);
+                console.log(`⚠️ AI timestamp ${claim.timeInSeconds}s outside bounds (${transcriptData.startTime}-${transcriptData.endTime}s), finding better match`);
+                finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData.segmentTimestamps);
               }
             } else {
               // AI didn't provide a good timestamp, find it ourselves
               console.log(`⚠️ AI didn't provide valid timestamp, finding match for: "${claim.claim}"`);
-              finalTimeInSeconds = findClaimTimestamp(claim.claim, chunk);
+              finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData.segmentTimestamps);
             }
             
             // Convert seconds to MM:SS format
@@ -535,8 +476,7 @@ async function analyzeLies(text, timeWindow, sensitivity = 'balanced', chunk = n
               timestamp: finalTimestamp,
               timeInSeconds: finalTimeInSeconds,
               duration: finalDuration,
-              severity: 'critical', // Ensure all flagged content is marked as critical
-              chunkAnalyzed: chunk.chunkIndex // Track which chunk this came from
+              severity: 'critical' // Ensure all flagged content is marked as critical
             };
           });
         }
@@ -588,7 +528,7 @@ async function updateSessionStats(newLies = []) {
   }
 }
 
-// Enhanced main function to process video with 5-minute chunk lies detection
+// Enhanced main function to process video with full transcript analysis
 async function processVideo() {
   try {
     const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
@@ -608,15 +548,17 @@ async function processVideo() {
 
     // Check for cached analysis first
     chrome.runtime.sendMessage({
-      type: 'analysisResult',
-      data: 'Checking for cached analysis...'
+      type: 'analysisProgress',
+      stage: 'cache_check',
+      message: 'Checking for cached analysis...'
     });
 
     const cachedAnalysis = await getCachedAnalysis(videoId);
     if (cachedAnalysis) {
       chrome.runtime.sendMessage({
-        type: 'analysisResult',
-        data: 'Loading cached analysis results...'
+        type: 'analysisProgress',
+        stage: 'cache_found',
+        message: 'Loading cached analysis results...'
       });
       
       // Send cached lies for real-time display
@@ -645,8 +587,9 @@ async function processVideo() {
 
     // No cache found, proceed with fresh analysis
     chrome.runtime.sendMessage({
-      type: 'analysisResult',
-      data: 'Extracting video transcript using Supadata API...'
+      type: 'analysisProgress',
+      stage: 'transcript_extraction',
+      message: 'Extracting video transcript using Supadata API...'
     });
 
     const transcript = await getTranscript();
@@ -659,14 +602,15 @@ async function processVideo() {
     }
 
     chrome.runtime.sendMessage({
-      type: 'analysisResult',
-      data: 'Creating 5-minute analysis chunks with context preservation...'
+      type: 'analysisProgress',
+      stage: 'transcript_preparation',
+      message: 'Preparing full transcript for analysis...'
     });
 
-    // Create 5-minute chunks with context preservation
-    const chunks = create5MinuteChunks(transcript);
+    // Prepare full transcript for analysis
+    const transcriptData = prepareFullTranscript(transcript);
     
-    if (chunks.length === 0) {
+    if (!transcriptData) {
       chrome.runtime.sendMessage({
         type: 'analysisResult',
         data: 'No analyzable content found in transcript.'
@@ -679,87 +623,34 @@ async function processVideo() {
     const sensitivity = settings.globalSensitivity || 'balanced';
     
     chrome.runtime.sendMessage({
-      type: 'analysisResult',
-      data: `🚨 Starting 5-minute chunk lies detection of ${chunks.length} chunks with ${sensitivity} threshold...`
+      type: 'analysisProgress',
+      stage: 'analysis_start',
+      message: `🚨 Starting full video lies detection with ${sensitivity} threshold...`
     });
 
-    // Analyze each 5-minute chunk for lies
-    let allLies = [];
-    let processedChunks = 0;
+    // Analyze the full transcript for lies
+    const analysis = await analyzeLies(transcriptData, sensitivity);
     
-    for (const [index, chunk] of chunks.entries()) {
-      try {
-        const currentChunk = index + 1;
-        chrome.runtime.sendMessage({
-          type: 'analysisResult',
-          data: `🕐 Analyzing chunk ${currentChunk}/${chunks.length} for lies (${chunk.timeWindow})...`
-        });
-
-        const analysis = await analyzeLies(chunk.text, chunk.timeWindow, sensitivity, chunk);
-        processedChunks++;
-        
-        if (analysis && analysis.claims && analysis.claims.length > 0) {
-          // Ensure each lie has proper timestamp data
-          const processedLies = analysis.claims.map(claim => {
-            console.log(`🚨 Lie timestamp: ${claim.timestamp} (${claim.timeInSeconds}s) duration: ${claim.duration}s in chunk ${currentChunk}`);
-            
-            return {
-              ...claim,
-              chunkAnalyzed: currentChunk,
-              severity: 'critical' // Ensure all detected lies are marked as critical
-            };
-          });
-          
-          allLies.push(...processedLies);
-          
-          // Send real-time lies update to popup
-          chrome.runtime.sendMessage({
-            type: 'liesUpdate',
-            claims: allLies, // Send all lies so far
-            totalClaims: allLies.length,
-            processedChunks: processedChunks,
-            totalChunks: chunks.length,
-            isComplete: false
-          });
-          
-          // Save incremental progress to cache
-          await saveAnalysisToCache(videoId, '', processedLies, true);
-          
-          // Send intermediate results with real-time updates
-          const liesText = processedLies.map(claim => 
-            `🚨 ${claim.timestamp} - Duration: ${claim.duration}s\n🚫 Lie: ${claim.claim}\n🎯 Confidence: ${Math.round(claim.confidence * 100)}%\n💡 ${claim.explanation}`
-          ).join('\n\n');
-          
-          chrome.runtime.sendMessage({
-            type: 'analysisResult',
-            data: `🚨 LIES DETECTED - Chunk ${currentChunk} 🚨\n${liesText}\n`
-          });
-        } else {
-          // No lies found in this chunk
-          chrome.runtime.sendMessage({
-            type: 'analysisResult',
-            data: `✅ Chunk ${currentChunk} analyzed - no lies detected`
-          });
-        }
-        
-        // Brief pause between API calls to avoid rate limiting
-        if (index < chunks.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        }
-        
-      } catch (error) {
-        console.error(`Error processing chunk ${index + 1}:`, error);
-        chrome.runtime.sendMessage({
-          type: 'analysisResult',
-          data: `⚠️ Error analyzing chunk ${index + 1}: ${error.message}`
-        });
-      }
+    let allLies = [];
+    if (analysis && analysis.claims && analysis.claims.length > 0) {
+      allLies = analysis.claims.map(claim => ({
+        ...claim,
+        severity: 'critical' // Ensure all detected lies are marked as critical
+      }));
     }
+
+    // Send final lies update
+    chrome.runtime.sendMessage({
+      type: 'liesUpdate',
+      claims: allLies,
+      totalClaims: allLies.length,
+      isComplete: true
+    });
 
     // Prepare final analysis
     let finalAnalysis;
     if (allLies.length === 0) {
-      finalAnalysis = `✅ 5-minute chunk lies detection complete!\n\nAnalyzed ${processedChunks} chunks of content (20 minutes total).\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our high-confidence detection criteria.`;
+      finalAnalysis = `✅ Full video lies detection complete!\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments).\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our high-confidence detection criteria.`;
     } else {
       // Sort lies by timestamp for final display
       allLies.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
@@ -770,21 +661,11 @@ async function processVideo() {
       
       const avgConfidence = Math.round(allLies.reduce((sum, c) => sum + c.confidence, 0) / allLies.length * 100);
       
-      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed ${processedChunks} chunks of content (20 minutes total).\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\n\n⚠️ WARNING: This content contains high-confidence false information that could be harmful if believed.\n\n${liesText}`;
+      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments).\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\n\n⚠️ WARNING: This content contains high-confidence false information that could be harmful if believed.\n\n${liesText}`;
     }
 
-    // Send final lies update
-    chrome.runtime.sendMessage({
-      type: 'liesUpdate',
-      claims: allLies,
-      totalClaims: allLies.length,
-      processedChunks: processedChunks,
-      totalChunks: chunks.length,
-      isComplete: true
-    });
-
     // Save final analysis to cache
-    await saveAnalysisToCache(videoId, finalAnalysis, allLies, false);
+    await saveAnalysisToCache(videoId, finalAnalysis, allLies);
     
     // Update session stats
     await updateSessionStats(allLies);

@@ -8,10 +8,9 @@ let analysisState = {
   progress: '',
   results: '',
   error: null,
-  processedChunks: 0,
-  totalChunks: 0,
   currentClaims: [],
-  startTime: null
+  startTime: null,
+  stage: 'idle'
 };
 
 // Persistent state management
@@ -70,8 +69,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         message.data.includes('Error')) {
       analysisState.isRunning = false;
       analysisState.results = message.data;
+      analysisState.stage = 'complete';
       if (message.data.includes('Error')) {
         analysisState.error = message.data;
+        analysisState.stage = 'error';
       }
     }
     
@@ -85,14 +86,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       // Popup might be closed, that's okay - we're storing the state
       console.log('Popup closed, storing analysis state in background');
     }
+  } else if (message.type === 'analysisProgress') {
+    // Handle progress updates with visual cues
+    analysisState.stage = message.stage;
+    analysisState.progress = message.message;
+    
+    // Save state persistently
+    saveAnalysisState();
+    
+    // Forward to popup
+    try {
+      chrome.runtime.sendMessage(message);
+    } catch (error) {
+      console.log('Popup closed, storing progress update in background');
+    }
   } else if (message.type === 'liesUpdate') {
     // Handle real-time lies updates
     analysisState.currentClaims = message.claims || [];
-    analysisState.processedChunks = message.processedChunks || 0;
-    analysisState.totalChunks = message.totalChunks || 0;
     
     if (message.isComplete) {
       analysisState.isRunning = false;
+      analysisState.stage = 'complete';
     }
     
     // Save state persistently
@@ -118,13 +132,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Track analysis start
     analysisState.isRunning = true;
     analysisState.videoId = message.videoId;
-    analysisState.progress = 'Starting 5-minute chunk analysis...';
+    analysisState.progress = 'Starting full video analysis...';
     analysisState.results = '';
     analysisState.error = null;
-    analysisState.processedChunks = 0;
-    analysisState.totalChunks = 0;
     analysisState.currentClaims = [];
     analysisState.startTime = Date.now();
+    analysisState.stage = 'starting';
     
     // Save state persistently
     saveAnalysisState();
@@ -143,10 +156,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       progress: '',
       results: '',
       error: null,
-      processedChunks: 0,
-      totalChunks: 0,
       currentClaims: [],
-      startTime: null
+      startTime: null,
+      stage: 'idle'
     };
     
     // Clear persistent storage
@@ -297,7 +309,7 @@ chrome.runtime.onMessage.addListener((message) => {
       type: 'basic',
       iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMzNGE4NTMiLz4KPHN2ZyB4PSIxMiIgeT0iMTIiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIj4KPHA+dGggZD0iTTkgMTJsMyAzIDYtNiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cjwvc3ZnPgo=',
       title: 'LieBlocker Analysis Complete',
-      message: `5-minute chunk fact-checking finished. Found ${analysisState.currentClaims.length} lies.`
+      message: `Video fact-checking finished. Found ${analysisState.currentClaims.length} lies.`
     });
   }
 });
@@ -312,7 +324,7 @@ chrome.runtime.onMessage.addListener((message) => {
         type: 'basic',
         iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KP2NpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiNkYzM1NDUiLz4KPHN2ZyB4PSIxMiIgeT0iMTIiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIj4KPHA+dGggZD0iTTEyIDl2NGwtMyAzaDZ6IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4KPC9zdmc+Cg==',
         title: 'Lies Detected!',
-        message: `Found ${highSeverityLies} lies in 5-minute chunk analysis. Check the extension for details.`
+        message: `Found ${highSeverityLies} lies in video analysis. Check the extension for details.`
       });
     }
   }

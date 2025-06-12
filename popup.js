@@ -1,5 +1,5 @@
-// Enhanced LieBlocker Popup Script focused on 5-Minute Chunk Analysis
-console.log('LieBlocker 5-minute chunk analysis popup loaded');
+// Enhanced LieBlocker Popup Script focused on Full Video Analysis
+console.log('LieBlocker full video analysis popup loaded');
 
 // Global state
 let currentStats = {
@@ -19,6 +19,7 @@ let feedbackStats = {
 let currentVideoLies = [];
 let isAnalysisRunning = false;
 let currentVideoId = null;
+let currentAnalysisStage = 'idle';
 
 // AI model configurations with GPT-4.1 Mini as default
 const aiModels = {
@@ -54,6 +55,21 @@ const aiModels = {
       description: 'Professional-grade model with high accuracy'
     }
   }
+};
+
+// Progress stage configurations for visual cues
+const progressStages = {
+  idle: { icon: '⏸️', message: 'Ready to analyze', color: '#6c757d' },
+  cache_check: { icon: '🔍', message: 'Checking cache...', color: '#17a2b8' },
+  cache_found: { icon: '📋', message: 'Loading cached results...', color: '#28a745' },
+  transcript_extraction: { icon: '📝', message: 'Extracting transcript...', color: '#ffc107' },
+  transcript_preparation: { icon: '⚙️', message: 'Preparing transcript...', color: '#fd7e14' },
+  analysis_start: { icon: '🚨', message: 'Starting analysis...', color: '#dc3545' },
+  ai_processing: { icon: '🤖', message: 'AI processing...', color: '#6f42c1' },
+  ai_request: { icon: '📡', message: 'Sending to AI...', color: '#e83e8c' },
+  processing_response: { icon: '⚡', message: 'Processing response...', color: '#20c997' },
+  complete: { icon: '✅', message: 'Analysis complete', color: '#28a745' },
+  error: { icon: '❌', message: 'Analysis failed', color: '#dc3545' }
 };
 
 // Initialize popup with immediate data loading
@@ -97,6 +113,9 @@ function showLoadingState() {
   if (liesCountElement) {
     liesCountElement.textContent = '...';
   }
+  
+  // Show initial progress state
+  updateProgressIndicator('idle');
 }
 
 function hideLoadingState() {
@@ -245,6 +264,34 @@ function showApiStatus(connected, message) {
     statusElement.style.display = 'flex';
     statusDot.className = `status-indicator ${connected ? 'connected' : 'warning'}`;
     statusText.textContent = message;
+  }
+}
+
+// Enhanced progress indicator with visual cues
+function updateProgressIndicator(stage, customMessage = null) {
+  currentAnalysisStage = stage;
+  const config = progressStages[stage] || progressStages.idle;
+  
+  const statusElement = document.getElementById('analysis-status');
+  const statusDot = document.getElementById('status-dot');
+  const statusText = document.getElementById('status-text');
+  
+  if (statusElement && statusDot && statusText) {
+    statusElement.style.display = 'flex';
+    
+    // Update status dot with stage-specific color
+    statusDot.className = 'status-indicator';
+    statusDot.style.backgroundColor = config.color;
+    
+    // Add pulsing animation for active stages
+    if (['transcript_extraction', 'ai_processing', 'ai_request', 'processing_response'].includes(stage)) {
+      statusDot.style.animation = 'pulse 1.5s infinite';
+    } else {
+      statusDot.style.animation = 'none';
+    }
+    
+    // Update status text with icon and message
+    statusText.innerHTML = `${config.icon} ${customMessage || config.message}`;
   }
 }
 
@@ -535,12 +582,12 @@ async function analyzeCurrentVideo() {
     // Update UI to show analysis is starting
     const analyzeBtn = document.getElementById('analyze-current');
     if (analyzeBtn) {
-      analyzeBtn.textContent = 'Starting 5-Min Analysis...';
+      analyzeBtn.textContent = 'Starting Analysis...';
       analyzeBtn.disabled = true;
       analyzeBtn.classList.add('loading');
     }
     
-    showApiStatus(true, 'Starting 5-minute chunk analysis...');
+    updateProgressIndicator('analysis_start', 'Starting full video analysis...');
     
     // Send message to content script to start analysis
     chrome.tabs.sendMessage(tab.id, { type: 'startAnalysis' }, (response) => {
@@ -548,7 +595,7 @@ async function analyzeCurrentVideo() {
         showNotification('Please refresh the page and try again', 'error');
         resetAnalysisUI();
       } else {
-        showNotification('5-minute chunk analysis started! Watch for real-time updates.', 'info');
+        showNotification('Full video analysis started! Watch for real-time progress updates.', 'info');
       }
     });
     
@@ -567,6 +614,7 @@ function resetAnalysisUI() {
     analyzeBtn.disabled = false;
     analyzeBtn.classList.remove('loading');
   }
+  updateProgressIndicator('idle');
 }
 
 // Immediate check for current video (synchronous where possible)
@@ -657,9 +705,9 @@ async function updateVideoStatsImmediate(videoId, title) {
       // Update lies indicator immediately
       updateLiesIndicator(lies);
       
-      showApiStatus(true, 'Analysis available');
+      updateProgressIndicator('complete', 'Analysis available');
     } else {
-      showApiStatus(false, 'Not analyzed');
+      updateProgressIndicator('idle', 'Not analyzed');
       updateLiesIndicator([]); // Clear lies indicator
       currentVideoLies = []; // Clear lies
     }
@@ -1057,9 +1105,10 @@ async function checkAnalysisStateImmediate() {
     if (response && response.isRunning) {
       isAnalysisRunning = true;
       currentVideoLies = response.currentClaims || [];
+      currentAnalysisStage = response.stage || 'analysis_start';
       
-      showNotification('5-minute chunk analysis running in background...', 'info', 5000);
-      showApiStatus(true, '5-minute chunk analysis in progress...');
+      showNotification('Full video analysis running in background...', 'info', 5000);
+      updateProgressIndicator(currentAnalysisStage, 'Full video analysis in progress...');
       
       // Update button state
       const analyzeBtn = document.getElementById('analyze-current');
@@ -1102,6 +1151,10 @@ function setupRealTimeUpdates() {
       handleAnalysisUpdate(message.data);
     }
     
+    if (message.type === 'analysisProgress') {
+      handleProgressUpdate(message);
+    }
+    
     if (message.type === 'liesUpdate') {
       handleLiesUpdate(message);
     }
@@ -1123,36 +1176,38 @@ function setupRealTimeUpdates() {
   });
 }
 
+// Handle real-time progress updates with visual cues
+function handleProgressUpdate(message) {
+  console.log('📊 Progress update received:', message);
+  
+  updateProgressIndicator(message.stage, message.message);
+  
+  // Update button text based on stage
+  const analyzeBtn = document.getElementById('analyze-current');
+  if (analyzeBtn && isAnalysisRunning) {
+    const stageTexts = {
+      cache_check: 'Checking Cache...',
+      transcript_extraction: 'Extracting Transcript...',
+      transcript_preparation: 'Preparing Analysis...',
+      analysis_start: 'Starting Analysis...',
+      ai_processing: 'AI Processing...',
+      ai_request: 'Sending to AI...',
+      processing_response: 'Processing Response...'
+    };
+    
+    analyzeBtn.textContent = stageTexts[message.stage] || 'Analyzing...';
+  }
+}
+
 // Handle real-time analysis updates
 function handleAnalysisUpdate(data) {
   console.log('📊 Analysis update received:', data);
   
-  // Update status based on the message content
-  if (data.includes('Extracting video transcript')) {
-    showApiStatus(true, 'Extracting transcript...');
-  } else if (data.includes('Creating 5-minute')) {
-    showApiStatus(true, 'Creating 5-minute chunks...');
-  } else if (data.includes('🚨 Starting 5-minute')) {
-    const match = data.match(/of (\d+) chunks/);
-    if (match) {
-      showApiStatus(true, `Starting 5-minute chunk analysis of ${match[1]} chunks...`);
-    }
-  } else if (data.includes('🕐 Analyzing chunk')) {
-    const match = data.match(/chunk (\d+)\/(\d+)/);
-    if (match) {
-      showApiStatus(true, `Analyzing chunk ${match[1]}/${match[2]} for lies...`);
-      
-      // Update button text
-      const analyzeBtn = document.getElementById('analyze-current');
-      if (analyzeBtn) {
-        analyzeBtn.textContent = `Analyzing... (${match[1]}/${match[2]})`;
-      }
-    }
-  } else if (data.includes('Analysis complete') || data.includes('loaded from cache')) {
+  if (data.includes('Analysis complete') || data.includes('loaded from cache')) {
     // Analysis finished
     isAnalysisRunning = false;
     resetAnalysisUI();
-    showApiStatus(true, '5-minute chunk analysis complete');
+    updateProgressIndicator('complete', 'Full video analysis complete');
     
     // Refresh the video stats and lies
     setTimeout(async () => {
@@ -1166,12 +1221,12 @@ function handleAnalysisUpdate(data) {
       }
     }, 1000);
     
-    showNotification('5-minute chunk analysis complete! Check the Lies tab for results.', 'success');
+    showNotification('Full video analysis complete! Check the Lies tab for results.', 'success');
   } else if (data.includes('Error')) {
     // Analysis error
     isAnalysisRunning = false;
     resetAnalysisUI();
-    showApiStatus(false, 'Analysis failed');
+    updateProgressIndicator('error', 'Analysis failed');
     showNotification('Analysis failed. Please try again.', 'error');
   }
 }
@@ -1195,7 +1250,7 @@ function handleLiesUpdate(message) {
     
     // Show notification for detected lies
     if (currentVideoLies.length > 0 && !message.isComplete) {
-      showNotification(`🚨 ${currentVideoLies.length} lies detected so far!`, 'warning', 3000);
+      showNotification(`🚨 ${currentVideoLies.length} lies detected!`, 'warning', 3000);
     }
   }
   
@@ -1203,8 +1258,8 @@ function handleLiesUpdate(message) {
   if (message.isComplete) {
     isAnalysisRunning = false;
     resetAnalysisUI();
-    showApiStatus(true, `5-minute chunk analysis complete - ${currentVideoLies.length} lies found`);
-    showNotification(`✅ 5-minute chunk analysis complete! Found ${currentVideoLies.length} lies in 20 minutes.`, 'success', 5000);
+    updateProgressIndicator('complete', `Full video analysis complete - ${currentVideoLies.length} lies found`);
+    showNotification(`✅ Full video analysis complete! Found ${currentVideoLies.length} lies in 20 minutes.`, 'success', 5000);
   }
 }
 
@@ -1223,8 +1278,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleAnalysisUpdate(message.data);
   }
   
+  if (message.type === 'analysisProgress') {
+    // Handle progress updates
+    handleProgressUpdate(message);
+  }
+  
   if (message.type === 'liesUpdate') {
     // Handle real-time lies updates
     handleLiesUpdate(message);
   }
 });
+
+// Add CSS for progress indicator animations
+const style = document.createElement('style');
+style.textContent = `
+  @keyframes pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+  }
+`;
+document.head.appendChild(style);
