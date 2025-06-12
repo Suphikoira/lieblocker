@@ -743,11 +743,18 @@
     
     <!-- Settings Tab -->
     <div class="tab-content" id="settings-tab">
-      <!-- AI Configuration -->
+      <!-- API Configuration -->
       <div class="setting-card">
         <div class="section-header">
           <span class="section-icon">🔧</span>
-          <span>AI Configuration</span>
+          <span>API Configuration</span>
+        </div>
+        
+        <div class="setting">
+          <label for="supadata-token">Supadata API Token</label>
+          <input type="password" id="supadata-token" placeholder="Enter your Supadata API token...">
+          <div id="supadata-token-error" class="error-message" style="display: none;"></div>
+          <div id="supadata-token-success" class="success-message" style="display: none;"></div>
         </div>
         
         <div class="setting">
@@ -780,10 +787,9 @@
         </div>
         
         <div class="setting">
-          <label for="api-key">API Key</label>
-          <input type="password" id="api-key" placeholder="Enter your API key...">
+          <label for="api-key">AI API Key</label>
+          <input type="password" id="api-key" placeholder="Enter your AI API key...">
           <div id="api-key-error" class="error-message" style="display: none;"></div>
-          
           <div id="api-key-success" class="success-message" style="display: none;"></div>
         </div>
       </div>

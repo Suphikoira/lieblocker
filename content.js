@@ -373,7 +373,7 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'ai_request',
-      message: `Analyzing ${transcriptData.totalSegments} segments with ${provider}...`
+      message: `Analyzing ${transcriptData.totalSegments} segments...`
     });
 
     let response;
@@ -589,7 +589,7 @@ async function processVideo() {
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'transcript_extraction',
-      message: 'Extracting video transcript using Supadata API...'
+      message: 'Extracting video transcript...'
     });
 
     const transcript = await getTranscript();
@@ -741,7 +741,7 @@ function jumpToVideoTimestamp(seconds) {
 let currentVideoLies = [];
 let skipModeActive = false;
 let skipModeInterval = null;
-let skippedLiesInSession = new Set(); // Track skipped lies by their unique identifier
+let skippedLiesInSession = new Set();
 
 // Function to create unique identifier for a lie
 function createLieId(lie) {
@@ -761,15 +761,13 @@ function startSkipModeMonitoring() {
   }
   
   skipModeActive = true;
-  skippedLiesInSession.clear(); // Reset skipped lies for new session
+  skippedLiesInSession.clear();
   console.log('🚀 Skip mode monitoring started with', currentVideoLies.length, 'lies to monitor');
   
-  // Clear any existing interval
   if (skipModeInterval) {
     clearInterval(skipModeInterval);
   }
   
-  // Check every 250ms for better accuracy
   skipModeInterval = setInterval(() => {
     checkAndSkipLies();
   }, 250);
@@ -801,24 +799,18 @@ function checkAndSkipLies() {
     const currentTime = video.currentTime;
     const isPlaying = !video.paused && !video.ended && video.readyState > 2;
     
-    // Only skip if video is actually playing
     if (!isPlaying) {
       return;
     }
     
-    // Check if current time falls within any lie segment
     for (const lie of currentVideoLies) {
-      const lieStart = lie.timeInSeconds; // This is the START of the lie
-      const lieDuration = lie.duration || 10; // Default 10 seconds if no duration
-      const lieEnd = lieStart + lieDuration; // This is the END of the lie
+      const lieStart = lie.timeInSeconds;
+      const lieDuration = lie.duration || 10;
+      const lieEnd = lieStart + lieDuration;
       const lieId = createLieId(lie);
       
-      // CRITICAL FIX: Check if we're currently in a lie segment
-      // The lie starts at lieStart and ends at lieEnd
       if (currentTime >= lieStart && currentTime < lieEnd) {
-        // Check if we've already skipped this lie in this session
         if (skippedLiesInSession.has(lieId)) {
-          // Already skipped this lie, don't skip again
           continue;
         }
         
@@ -830,24 +822,19 @@ function checkAndSkipLies() {
         console.log(`   - Current time: ${currentTime.toFixed(1)}s`);
         console.log(`   - Claim: "${lie.claim}"`);
         
-        // Mark this lie as skipped
         skippedLiesInSession.add(lieId);
         
-        // Jump to the end of the lie segment (AFTER the lie finishes)
-        const skipToTime = lieEnd + 1; // Add 1 second buffer
+        const skipToTime = lieEnd + 1;
         video.currentTime = skipToTime;
         
-        // Update URL to reflect new timestamp
         const url = new URL(window.location.href);
         url.searchParams.set('t', Math.floor(skipToTime) + 's');
         window.history.replaceState({}, '', url.toString());
         
-        // Show notification about the skip
         showSkipNotification(lie, lieDuration);
         
         console.log(`✅ Skipped to ${skipToTime}s (after ${lieDuration}s lie)`);
         
-        // Only skip one lie at a time
         break;
       }
     }
@@ -860,7 +847,6 @@ function checkAndSkipLies() {
 // Function to show skip notification
 function showSkipNotification(lie, duration) {
   try {
-    // Create notification element
     const notification = document.createElement('div');
     notification.style.cssText = `
       position: fixed;
@@ -891,7 +877,6 @@ function showSkipNotification(lie, duration) {
       </div>
     `;
     
-    // Add CSS animation
     const style = document.createElement('style');
     style.textContent = `
       @keyframes slideInBounce {
@@ -913,7 +898,6 @@ function showSkipNotification(lie, duration) {
     
     document.body.appendChild(notification);
     
-    // Remove notification after 3 seconds
     setTimeout(() => {
       if (notification.parentNode) {
         notification.style.animation = 'slideOut 0.3s ease-in-out forwards';
@@ -938,12 +922,10 @@ function updateDetectionMode(mode) {
   console.log('🔧 Detection mode updated to:', mode);
   
   if (mode === 'skip') {
-    // Start skip mode if we have lies
     if (currentVideoLies && currentVideoLies.length > 0) {
       startSkipModeMonitoring();
     }
   } else {
-    // Stop skip mode
     stopSkipModeMonitoring();
   }
 }
@@ -984,7 +966,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // Handle page navigation and cleanup
 function handlePageNavigation() {
-  // Reset skip mode state when navigating to a new video
   const currentVideoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
   
   if (currentVideoId !== lastVideoId) {

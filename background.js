@@ -179,13 +179,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Enhanced function to extract transcript using Supadata API with English language forcing
+// Enhanced function to extract transcript using Supadata API with configurable token
 async function handleTranscriptRequest(requestData) {
   const { videoId, currentUrl } = requestData;
   
   try {
     console.log('🎬 Background: Extracting ENGLISH transcript using Supadata API for video:', videoId);
     console.log('🌐 Background: URL being processed:', currentUrl);
+    
+    // Get Supadata token from storage
+    const tokenResult = await chrome.storage.local.get(['supadataToken']);
+    const supadataToken = tokenResult.supadataToken;
+    
+    if (!supadataToken) {
+      throw new Error('Supadata API token not configured. Please set your token in the extension settings.');
+    }
     
     // Build the API URL with query parameters and force English language
     const apiUrl = new URL('https://api.supadata.ai/v1/youtube/transcript');
@@ -198,7 +206,7 @@ async function handleTranscriptRequest(requestData) {
     const response = await fetch(apiUrl.toString(), {
       method: 'GET',
       headers: {
-        'x-api-key': 'sd_04816d137d8fe5d62fd58003f564c0c9',
+        'x-api-key': supadataToken,
         'Content-Type': 'application/json'
       }
     });
@@ -220,7 +228,7 @@ async function handleTranscriptRequest(requestData) {
         const fallbackResponse = await fetch(fallbackUrl.toString(), {
           method: 'GET',
           headers: {
-            'x-api-key': 'sd_04816d137d8fe5d62fd58003f564c0c9',
+            'x-api-key': supadataToken,
             'Content-Type': 'application/json'
           }
         });

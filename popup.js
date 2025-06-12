@@ -65,7 +65,7 @@ const progressStages = {
   transcript_extraction: { icon: '📝', message: 'Extracting transcript...', color: '#ffc107' },
   transcript_preparation: { icon: '⚙️', message: 'Preparing transcript...', color: '#fd7e14' },
   analysis_start: { icon: '🚨', message: 'Starting analysis...', color: '#dc3545' },
-  ai_processing: { icon: '🤖', message: 'AI processing...', color: '#6f42c1' },
+  ai_processing: { icon: '🤖', message: 'Processing...', color: '#6f42c1' },
   ai_request: { icon: '📡', message: 'Sending to AI...', color: '#e83e8c' },
   processing_response: { icon: '⚡', message: 'Processing response...', color: '#20c997' },
   complete: { icon: '✅', message: 'Analysis complete', color: '#28a745' },
@@ -202,8 +202,9 @@ async function loadSettings() {
       geminiModelSelect.value = defaultModel;
     }
     
-    // Load API key for current provider
+    // Load API keys for current provider and Supadata
     await loadApiKey(settings.aiProvider || 'openai');
+    await loadSupadataToken();
     
     return true;
   } catch (error) {
@@ -255,6 +256,23 @@ async function loadApiKey(provider) {
   }
 }
 
+async function loadSupadataToken() {
+  try {
+    const result = await chrome.storage.local.get(['supadataToken']);
+    const tokenInput = document.getElementById('supadata-token');
+    if (tokenInput && result.supadataToken) {
+      tokenInput.value = '••••••••••••••••'; // Masked display
+      showSupadataStatus(true, 'Supadata token configured');
+    } else {
+      tokenInput.value = '';
+      showSupadataStatus(false, 'Supadata token required');
+    }
+  } catch (error) {
+    console.error('Error loading Supadata token:', error);
+    showSupadataStatus(false, 'Error loading Supadata token');
+  }
+}
+
 function showApiStatus(connected, message) {
   const statusElement = document.getElementById('analysis-status');
   const statusDot = document.getElementById('status-dot');
@@ -264,6 +282,29 @@ function showApiStatus(connected, message) {
     statusElement.style.display = 'flex';
     statusDot.className = `status-indicator ${connected ? 'connected' : 'warning'}`;
     statusText.textContent = message;
+  }
+}
+
+function showSupadataStatus(connected, message) {
+  const successElement = document.getElementById('supadata-token-success');
+  const errorElement = document.getElementById('supadata-token-error');
+  
+  if (connected) {
+    if (successElement) {
+      successElement.textContent = message;
+      successElement.style.display = 'block';
+    }
+    if (errorElement) {
+      errorElement.style.display = 'none';
+    }
+  } else {
+    if (errorElement) {
+      errorElement.textContent = message;
+      errorElement.style.display = 'block';
+    }
+    if (successElement) {
+      successElement.style.display = 'none';
+    }
   }
 }
 
@@ -441,6 +482,31 @@ function setupEventListeners() {
     });
   }
   
+  // Supadata token handling
+  const supadataTokenInput = document.getElementById('supadata-token');
+  if (supadataTokenInput) {
+    supadataTokenInput.addEventListener('focus', () => {
+      if (supadataTokenInput.value === '••••••••••••••••') {
+        supadataTokenInput.value = '';
+        supadataTokenInput.type = 'text';
+      }
+    });
+    
+    supadataTokenInput.addEventListener('blur', async () => {
+      if (supadataTokenInput.value.trim()) {
+        await saveSupadataToken();
+      }
+      supadataTokenInput.type = 'password';
+    });
+    
+    supadataTokenInput.addEventListener('keydown', async (e) => {
+      if (e.key === 'Enter') {
+        await saveSupadataToken();
+        supadataTokenInput.blur();
+      }
+    });
+  }
+  
   // API Key handling
   const apiKeyInput = document.getElementById('api-key');
   if (apiKeyInput) {
@@ -512,6 +578,41 @@ function setupLiesCircleClickHandler() {
   }
 }
 
+async function saveSupadataToken() {
+  const tokenInput = document.getElementById('supadata-token');
+  
+  if (!tokenInput) return;
+  
+  const token = tokenInput.value.trim();
+  
+  if (!token) {
+    showNotification('Please enter a Supadata token', 'error');
+    return;
+  }
+  
+  try {
+    // Basic validation - check if it's not empty and has reasonable length
+    if (token.length < 10) {
+      showNotification('Invalid Supadata token format', 'error');
+      return;
+    }
+    
+    // Save Supadata token
+    await chrome.storage.local.set({
+      supadataToken: token
+    });
+    
+    // Update UI
+    tokenInput.value = '••••••••••••••••';
+    showSupadataStatus(true, 'Supadata token saved');
+    showNotification('Supadata token saved successfully', 'success');
+    
+  } catch (error) {
+    console.error('Error saving Supadata token:', error);
+    showNotification('Failed to save Supadata token', 'error');
+  }
+}
+
 async function saveApiKey() {
   const apiKeyInput = document.getElementById('api-key');
   const aiProviderSelect = document.getElementById('ai-provider');
@@ -564,7 +665,14 @@ async function analyzeCurrentVideo() {
       return;
     }
     
-    // Check if API key is configured
+    // Check if Supadata token is configured
+    const supadataResult = await chrome.storage.local.get(['supadataToken']);
+    if (!supadataResult.supadataToken) {
+      showNotification('Please configure your Supadata API token first', 'error');
+      return;
+    }
+    
+    // Check if AI API key is configured
     const provider = document.getElementById('ai-provider').value;
     const result = await chrome.storage.local.get([`${provider}ApiKey`]);
     
@@ -1190,7 +1298,7 @@ function handleProgressUpdate(message) {
       transcript_extraction: 'Extracting Transcript...',
       transcript_preparation: 'Preparing Analysis...',
       analysis_start: 'Starting Analysis...',
-      ai_processing: 'AI Processing...',
+      ai_processing: 'Processing...',
       ai_request: 'Sending to AI...',
       processing_response: 'Processing Response...'
     };
