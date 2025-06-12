@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {
+      width: 320px;
+      min-height: 500px;
+      margin: 0;
+      padding: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #f5f5f5 0%, #e8e8e8 100%);
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #8b5a3c 0%, #6d4c41 100%);
+      color: white;
+      padding: 20px;
+      text-align: center;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      position: relative;
+    }
+    
+    .logo {
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    
+    .tagline {
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    
+    .content {
+      padding: 20px;
+    }
+    
+    .stats-card {
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border: 1px solid rgba(0,0,0,0.05);
+    }
+    
+    .stats-title {
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #333;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    
+    .stat-item {
+      text-align: center;
+      padding: 8px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border: 1px solid #e9ecef;
+    }
+    
+    .stat-value {
+      font-size: 18px;
+      font-weight: bold;
+      color: #8b5a3c;
+    }
+    
+    .stat-label {
+      font-size: 11px;
+      color: #666;
+      margin-top: 2px;
+    }
+    
+    /* Lies Indicator */
+    .lies-indicator {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin: 20px 0;
+      padding: 20px;
+      background: linear-gradient(135deg, #fff5f5 0%, #fef2f2 100%);
+      border-radius: 16px;
+      border: 2px solid #fee2e2;
+    }
+    
+    .lies-circle {
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      background: linear-gradient(135deg, #a0522d 0%, #8b4513 100%);
+      box-shadow: 0 8px 25px rgba(160, 82, 45, 0.4);
+      transition: all 0.3s ease;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .lies-circle:hover {
+      transform: scale(1.05);
+      box-shadow: 0 12px 35px rgba(160, 82, 45, 0.5);
+    }
+    
+    .lies-circle:active {
+      transform: scale(0.95);
+    }
+    
+    .lies-circle::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: linear-gradient(45deg, transparent, rgba(255,255,255,0.1), transparent);
+      transform: rotate(45deg);
+      transition: all 0.6s ease;
+    }
+    
+    .lies-circle:hover::before {
+      animation: shine 0.6s ease-in-out;
+    }
+    
+    @keyframes shine {
+      0% { transform: translateX(-100%) translateY(-100%) rotate(45deg); }
+      100% { transform: translateX(100%) translateY(100%) rotate(45deg); }
+    }
+    
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+      100% { transform: scale(1); }
+    }
+    
+    .lies-count {
+      font-size: 36px;
+      font-weight: 900;
+      margin-bottom: 4px;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    
+    .lies-label {
+      font-size: 14px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    }
+    
+    .demo-badge {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      padding: 4px 8px;
+      border-radius: 12px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    
+    .setting-card {
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border: 1px solid rgba(0,0,0,0.05);
+    }
+    
+    .setting {
+      margin-bottom: 16px;
+    }
+    
+    .setting:last-child {
+      margin-bottom: 0;
+    }
+    
+    .setting label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: #333;
+      font-size: 13px;
+    }
+    
+    select, input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 13px;
+      box-sizing: border-box;
+    }
+    
+    select:focus, input:focus {
+      outline: none;
+      border-color: #8b5a3c;
+      box-shadow: 0 0 0 2px rgba(139, 90, 60, 0.1);
+    }
+    
+    .toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    
+    .switch {
+      position: relative;
+      width: 56px;
+      height: 28px;
+      background: #ddd;
+      border-radius: 14px;
+      cursor: pointer;
+      transition: background 0.3s ease;
+    }
+    
+    .switch.active {
+      background: #4caf50;
+    }
+    
+    .switch::after {
+      content: '';
+      position: absolute;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: white;
+      top: 2px;
+      left: 2px;
+      transition: left 0.3s ease;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    .switch.active::after {
+      left: 30px;
+    }
+    
+    .feedback-stats {
+      margin-top: 8px;
+    }
+    
+    .feedback-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 4px 0;
+      font-size: 12px;
+    }
+    
+    .feedback-icon {
+      margin-right: 6px;
+    }
+    
+    .api-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding: 12px 16px;
+      background: white;
+      border-radius: 8px;
+      font-size: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border: 1px solid rgba(0,0,0,0.05);
+    }
+    
+    .status-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #dc3545;
+    }
+    
+    .status-indicator.connected {
+      background: #28a745;
+    }
+    
+    .status-indicator.warning {
+      background: #ffc107;
+    }
+    
+    .action-buttons {
+      margin-top: 16px;
+      display: flex;
+      gap: 8px;
+    }
+    
+    .btn {
+      flex: 1;
+      padding: 12px 16px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .btn-primary {
+      background: linear-gradient(135deg, #8b5a3c 0%, #6d4c41 100%);
+      color: white;
+      box-shadow: 0 4px 12px rgba(139, 90, 60, 0.3);
+    }
+    
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(139, 90, 60, 0.4);
+    }
+    
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+    
+    .btn-secondary {
+      background: #f8f9fa;
+      color: #333;
+      border: 1px solid #dee2e6;
+    }
+    
+    .btn-secondary:hover {
+      background: #e9ecef;
+      transform: translateY(-1px);
+    }
+    
+    .error-message {
+      color: #dc3545;
+      font-size: 11px;
+      margin-top: 4px;
+    }
+    
+    .success-message {
+      color: #28a745;
+      font-size: 11px;
+      margin-top: 4px;
+    }
+    
+    .loading {
+      opacity: 0.6;
+      pointer-events: none;
+    }
+    
+    .tab-container {
+      display: flex;
+      background: white;
+      border-radius: 8px;
+      padding: 4px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    
+    .tab {
+      flex: 1;
+      padding: 8px 12px;
+      text-align: center;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      color: #666;
+    }
+    
+    .tab.active {
+      background: #8b5a3c;
+      color: white;
+    }
+    
+    .tab-content {
+      display: none;
+    }
+    
+    .tab-content.active {
+      display: block;
+    }
+    
+    /* Enhanced Settings Styles */
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+      font-weight: 600;
+      color: #333;
+      font-size: 14px;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 8px;
+      position: relative;
+    }
+    
+    .section-icon {
+      font-size: 16px;
+    }
+    
+    .btn-reset {
+      position: absolute;
+      right: 0;
+      padding: 4px 8px;
+      font-size: 10px;
+      background: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      cursor: pointer;
+      color: #666;
+    }
+    
+    .btn-reset:hover {
+      background: #e9ecef;
+    }
+    
+    .range-input {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+    }
+    
+    .range-input input[type="range"] {
+      flex: 1;
+      height: 4px;
+      background: #ddd;
+      border-radius: 2px;
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    
+    .range-input input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #8b5a3c;
+      cursor: pointer;
+    }
+    
+    .range-value {
+      font-size: 11px;
+      font-weight: 600;
+      color: #8b5a3c;
+      min-width: 30px;
+    }
+    
+    .btn-danger {
+      background: #dc3545;
+      color: white;
+    }
+    
+    .btn-danger:hover {
+      background: #c82333;
+    }
+    
+    /* Enhanced notification system */
+    .notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      max-width: 280px;
+      padding: 16px 20px;
+      border-radius: 12px;
+      color: white;
+      font-size: 13px;
+      font-weight: 600;
+      z-index: 1000;
+      animation: slideInBounce 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .notification.success {
+      background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+    }
+    
+    .notification.error {
+      background: linear-gradient(135deg, #dc3545 0%, #e74c3c 100%);
+    }
+    
+    .notification.warning {
+      background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+      color: #333;
+    }
+    
+    .notification.info {
+      background: linear-gradient(135deg, #17a2b8 0%, #6f42c1 100%);
+    }
+    
+    .notification-icon {
+      font-size: 18px;
+      flex-shrink: 0;
+    }
+    
+    .notification-content {
+      flex: 1;
+      line-height: 1.4;
+    }
+    
+    .notification-close {
+      background: none;
+      border: none;
+      color: inherit;
+      font-size: 16px;
+      cursor: pointer;
+      padding: 0;
+      margin-left: 8px;
+      opacity: 0.7;
+      transition: opacity 0.2s ease;
+    }
+    
+    .notification-close:hover {
+      opacity: 1;
+    }
+    
+    @keyframes slideInBounce {
+      0% {
+        transform: translateX(100%) scale(0.8);
+        opacity: 0;
+      }
+      60% {
+        transform: translateX(-10px) scale(1.05);
+        opacity: 1;
+      }
+      100% {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+      }
+    }
+    
+    @keyframes slideOut {
+      0% {
+        transform: translateX(0) scale(1);
+        opacity: 1;
+      }
+      100% {
+        transform: translateX(100%) scale(0.8);
+        opacity: 0;
+      }
+    }
+    
+    .notification.removing {
+      animation: slideOut 0.3s ease-in-out forwards;
+    }
+    
+    /* Lies Tab Styles */
+    .lies-list {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+    
+    .lie-item {
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 12px;
+      transition: all 0.2s ease;
+      position: relative;
+    }
+    
+    .clickable-lie-item {
+      cursor: pointer;
+    }
+    
+    .clickable-lie-item:hover {
+      background: white;
+      border-color: #8b5a3c;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      transform: translateY(-1px);
+    }
+    
+    .lie-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    
+    .lie-number {
+      font-weight: bold;
+      color: #8b5a3c;
+      font-size: 14px;
+    }
+    
+    .lie-timestamp {
+      font-size: 11px;
+      color: #666;
+      background: #e9ecef;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+    }
+    
+    .clickable-lie-item .lie-timestamp {
+      background: #8b5a3c;
+      color: white;
+    }
+    
+    .lie-text {
+      font-weight: 600;
+      margin-bottom: 8px;
+      color: #333;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    
+    .lie-explanation {
+      color: #666;
+      font-size: 12px;
+      line-height: 1.4;
+      margin-bottom: 8px;
+    }
+    
+    .lie-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+    }
+    
+    .lie-confidence {
+      color: #28a745;
+      font-weight: 600;
+    }
+    
+    .lie-severity {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    
+    .lie-severity.critical {
+      background: #8b5a3c;
+      color: white;
+    }
+    
+    .no-lies-message {
+      text-align: center;
+      color: #666;
+      font-style: italic;
+      padding: 40px 20px;
+    }
+    
+    /* Model Selection Styles */
+    .model-selection {
+      margin-top: 12px;
+      padding: 12px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border: 1px solid #e9ecef;
+    }
+    
+    .model-selection.hidden {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="demo-badge">Skip Lies</div>
+    <div class="logo">
+      <span>🛡️</span>
+      <span>LieBlocker</span>
+    </div>
+    <div class="tagline">Skip lies automatically</div>
+  </div>
+  
+  <div class="content">
+    <div class="tab-container">
+      <div class="tab active" data-tab="overview">Overview</div>
+      <div class="tab" data-tab="lies">Lies</div>
+      <div class="tab" data-tab="settings">Settings</div>
+    </div>
+    
+    <!-- Overview Tab -->
+    <div class="tab-content active" id="overview-tab">
+      <!-- Lies Indicator -->
+      <div class="stats-card">
+        <div class="stats-title">
+          <span>🚨</span>
+          <span>Lies Detected</span>
+        </div>
+        <div class="lies-indicator">
+          <div class="lies-circle" id="lies-circle">
+            <div class="lies-count" id="lies-count">0</div>
+            <div class="lies-label">Lies</div>
+          </div>
+        </div>
+      </div>
+      
+      <div id="analysis-status" class="api-status" style="display: none;">
+        <div class="status-indicator" id="status-dot"></div>
+        <span id="status-text">Checking...</span>
+      </div>
+      
+      <div class="action-buttons">
+        <button class="btn btn-primary" id="analyze-current">Analyze Current Video</button>
+      </div>
+    </div>
+    
+    <!-- Lies Tab -->
+    <div class="tab-content" id="lies-tab">
+      <div class="stats-card">
+        <div class="section-header">
+          <span class="section-icon">🚨</span>
+          <span>Detected Lies with Skip</span>
+        </div>
+        <div class="lies-list" id="lies-list">
+          <!-- Lies will be populated here -->
+        </div>
+        <div class="no-lies-message" id="no-lies-message">
+          No lies detected for the current video.
+        </div>
+      </div>
+    </div>
+    
+    <!-- Settings Tab -->
+    <div class="tab-content" id="settings-tab">
+      <!-- AI Configuration -->
+      <div class="setting-card">
+        <div class="section-header">
+          <span class="section-icon">🔧</span>
+          <span>AI Configuration</span>
+        </div>
+        
+        <div class="setting">
+          <label for="ai-provider">AI Provider</label>
+          <select id="ai-provider">
+            <option value="openai">OpenAI</option>
+            <option value="gemini">Google Gemini</option>
+          </select>
+        </div>
+        
+        <!-- OpenAI Model Selection -->
+        <div class="model-selection" id="openai-models">
+          <label for="openai-model">OpenAI Model</label>
+          <select id="openai-model">
+            <option value="gpt-4.1-mini">GPT-4.1 Mini (Default)</option>
+            <option value="gpt-4.1-nano">GPT-4.1 Nano</option>
+            <option value="o4-mini">o4-mini</option>
+            <option value="gpt-4.1">GPT-4.1</option>
+          </select>
+        </div>
+        
+        <!-- Gemini Model Selection -->
+        <div class="model-selection hidden" id="gemini-models">
+          <label for="gemini-model">Gemini Model</label>
+          <select id="gemini-model">
+            <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash Experimental</option>
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+          </select>
+        </div>
+        
+        <div class="setting">
+          <label for="api-key">API Key</label>
+          <input type="password" id="api-key" placeholder="Enter your API key...">
+          <div id="api-key-error" class="error-message" style="display: none;"></div>
+          
+          <div id="api-key-success" class="success-message" style="display: none;"></div>
+        </div>
+      </div>
+      
+      <!-- General Settings -->
+      <div class="setting-card">
+        <div class="section-header">
+          <span class="section-icon">⚙️</span>
+          <span>Detection Settings</span>
+        </div>
+        
+        <div class="setting">
+          <label for="detection-mode">Detection Method</label>
+          <select id="detection-mode">
+            <option value="visual">Visual warnings only</option>
+            <option value="skip">Skip lies automatically</option>
+          </select>
+        </div>
+        
+        <div class="setting">
+          <label for="global-sensitivity">Detection Threshold</label>
+          <select id="global-sensitivity">
+            <option value="conservative">Ultra-Conservative (Highest confidence only)</option>
+            <option value="balanced">Balanced (High confidence required)</option>
+            <option value="aggressive">Sensitive (Moderate confidence)</option>
+          </select>
+        </div>
+      </div>
+      
+      <!-- Session Statistics -->
+      <div class="setting-card">
+        <div class="section-header">
+          <span class="section-icon">📊</span>
+          <span>Session Statistics</span>
+        </div>
+        <div class="stats-grid">
+          <div class="stat-item">
+            <div class="stat-value" id="videos-analyzed">0</div>
+            <div class="stat-label">Videos Analyzed</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="lies-detected">0</div>
+            <div class="stat-label">Lies Detected</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="high-severity">0</div>
+            <div class="stat-label">High Confidence</div>
+          </div>
+          <div class="stat-item">
+            <div class="stat-value" id="time-saved">0m</div>
+            <div class="stat-label">Time Saved</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Cache Management -->
+      <div class="setting-card">
+        <div class="section-header">
+          <span class="section-icon">🗄️</span>
+          <span>Cache Management</span>
+        </div>
+        
+        <div class="action-buttons">
+          <button class="btn btn-danger" id="clear-cache">Clear Cache</button>
+          <button class="btn btn-secondary" id="export-settings">Export Settings</button>
+        </div>
+        
+        <input type="file" id="settings-file-input" accept=".json" style="display: none;">
+      </div>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
