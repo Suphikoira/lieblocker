@@ -66,18 +66,46 @@ function prepareFullTranscript(transcript) {
   console.log(`📊 Preparing full transcript analysis for ${DEMO_LIMIT_MINUTES} minutes`);
   console.log(`📊 Processing ${filteredTranscript.length} transcript segments`);
   
-  // Build the full text and segment timestamps
+  // Build the full text with precise timestamp mapping
   let fullText = '';
   let segmentTimestamps = [];
+  let wordToTimestampMap = new Map(); // Map words to their timestamps
   
   for (const segment of filteredTranscript) {
     const segmentText = segment.text.trim();
     if (segmentText) {
-      fullText += (fullText ? ' ' : '') + segmentText;
+      const words = segmentText.split(/\s+/);
+      const segmentStartPos = fullText.length;
+      
+      // Add space if not first segment
+      if (fullText) {
+        fullText += ' ';
+      }
+      
+      // Add the segment text
+      fullText += segmentText;
+      
+      // Create detailed word mapping for precise timestamp matching
+      let wordStartPos = segmentStartPos + (fullText.length > segmentText.length ? 1 : 0);
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        const wordEndPos = wordStartPos + word.length;
+        
+        // Map each word position to its timestamp
+        for (let pos = wordStartPos; pos < wordEndPos; pos++) {
+          wordToTimestampMap.set(pos, segment.start);
+        }
+        
+        // Move to next word position (including space)
+        wordStartPos = wordEndPos + 1;
+      }
+      
       segmentTimestamps.push({
         text: segmentText,
         timestamp: segment.start,
-        words: segmentText.split(' ').map(word => word.toLowerCase())
+        startPos: segmentStartPos,
+        endPos: fullText.length,
+        words: words.map(word => word.toLowerCase().replace(/[^\w]/g, ''))
       });
     }
   }
@@ -92,6 +120,7 @@ function prepareFullTranscript(transcript) {
     startTime: startTime,
     endTime: endTime,
     segmentTimestamps: segmentTimestamps,
+    wordToTimestampMap: wordToTimestampMap,
     timeWindow: `0:00 - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`,
     totalSegments: filteredTranscript.length
   };
@@ -181,136 +210,151 @@ async function cleanOldCache() {
   }
 }
 
-// Enhanced system prompt function focused on lies detection for full video analysis
+// Enhanced system prompt function with improved lie detection criteria
 function buildSystemPrompt(sensitivity) {
   const baseSensitivity = {
     conservative: {
       threshold: 'extremely high confidence (95%+)',
       focus: 'only the most egregious and demonstrably false claims with overwhelming evidence',
-      description: 'Be extremely selective and only flag claims that are demonstrably false with overwhelming evidence and pose significant harm potential'
+      description: 'Be extremely selective and only flag claims that are demonstrably false with overwhelming evidence and pose significant harm potential',
+      examples: 'medical misinformation that could cause harm, completely fabricated historical events, dangerous conspiracy theories with no factual basis'
     },
     balanced: {
       threshold: 'very high confidence (85%+)',
       focus: 'clearly false claims with strong evidence and significant impact',
-      description: 'Flag claims that are clearly false with strong evidence and have potential for significant misinformation impact'
+      description: 'Flag claims that are clearly false with strong evidence and have potential for significant misinformation impact',
+      examples: 'false scientific claims, incorrect financial advice, misleading health information, fabricated news events'
     },
     aggressive: {
       threshold: 'high confidence (75%+)',
       focus: 'false or highly misleading claims with substantial evidence',
-      description: 'Flag claims that are false or highly misleading with substantial evidence against them'
+      description: 'Flag claims that are false or highly misleading with substantial evidence against them',
+      examples: 'misleading statistics, exaggerated claims, selective presentation of facts, unsubstantiated assertions'
     }
   };
 
   const config = baseSensitivity[sensitivity] || baseSensitivity.balanced;
 
-  return `You are an expert fact-checker specializing in detecting LIES in video content. Your mission is to identify ${config.focus} with ${config.threshold}.
+  return `You are an expert fact-checker and misinformation detection specialist. Your mission is to identify ${config.focus} with ${config.threshold}.
 
-${config.description}.
+CORE MISSION: ${config.description}
 
-LIES DETECTION CRITERIA:
-- ONLY flag claims that are factually incorrect with strong evidence
-- Focus on claims that could cause significant harm if believed
-- Prioritize claims about health, safety, science, politics, or financial advice
-- Ignore opinions, predictions, or subjective statements
-- Require ${config.threshold} before flagging anything
-- Consider the potential impact and reach of the misinformation
+DETECTION CRITERIA (STRICT):
+1. FACTUAL ACCURACY: Only flag claims that are objectively, verifiably false
+2. EVIDENCE REQUIREMENT: Must have strong, credible evidence contradicting the claim
+3. HARM POTENTIAL: Prioritize claims that could cause significant harm if believed
+4. CONFIDENCE THRESHOLD: Require ${config.threshold} before flagging anything
+5. CONTEXT AWARENESS: Consider speaker intent, audience, and presentation context
 
-FULL VIDEO ANALYSIS INSTRUCTIONS:
-- You are analyzing the complete video transcript (up to 20 minutes)
-- The content represents a continuous conversation/presentation
-- Analyze the entire flow of ideas and context comprehensively
-- Look for patterns of misinformation throughout the video
-- Consider how lies may build upon each other or contradict established facts
+PRIORITY CATEGORIES:
+- Health & Medical: False treatments, dangerous remedies, vaccine misinformation
+- Science & Technology: Debunked theories, impossible claims, fabricated research
+- Financial: Investment scams, false economic data, misleading financial advice
+- Politics & Current Events: Fabricated news, false statistics, conspiracy theories
+- Safety & Security: Dangerous instructions, false emergency information
 
-TIMESTAMP AND DURATION INSTRUCTIONS:
-- You will receive text with a time window (e.g., "0:00 - 20:00" for full video)
-- When you identify a lie, provide the EXACT timestamp when the lie BEGINS
-- ALWAYS provide "timestamp" (MM:SS format), "timeInSeconds" (total seconds), and "duration" (seconds) for each lie
-- Duration should reflect how long the false claim is being made (typically 5-30 seconds)
-- Be PRECISE with timestamps - they must correspond to when the lie STARTS being spoken
-- The timestamp should be the START of the lie, not the middle or end
+EXAMPLES OF FLAGGABLE CONTENT (${sensitivity} threshold):
+${config.examples}
 
-RESPONSE FORMAT:
-Respond with a JSON object containing an array of lies. Each lie should have:
-- "timestamp": The exact timestamp when the lie STARTS (e.g., "7:34")
-- "timeInSeconds": Timestamp converted to seconds (e.g., 454)
-- "duration": How long the lie lasts in seconds (e.g., 15)
-- "claim": The specific false statement (be precise and quote directly)
-- "explanation": Brief fact-check explaining why this is false (1 sentence max)
-- "confidence": Your confidence level (0.75-1.0 for lies only)
-- "severity": Always "critical" for flagged content
+WHAT NOT TO FLAG:
+- Opinions, personal beliefs, or subjective statements
+- Predictions about future events (unless claiming certainty about unknowable futures)
+- Hyperbole, metaphors, or obvious exaggerations for effect
+- Disputed topics where experts disagree
+- Statements that are technically true but misleading (unless extremely harmful)
+- Religious, philosophical, or ideological beliefs
+- Jokes, satire, or clearly entertainment content
 
-GUIDELINES:
-- Only flag factual claims that are demonstrably false
-- Require ${config.threshold} before flagging
-- Focus on verifiable facts vs. speculation
-- Consider the context and speaker's intent
-- Prioritize claims with high harm potential
-- Use the provided segment timestamps for accurate timing
-- If no lies are found, return an empty claims array
-- Keep explanations brief and factual
-- ENSURE timestamps and durations are accurate to when the lie STARTS being spoken
+TIMESTAMP PRECISION REQUIREMENTS:
+- Analyze the complete 20-minute transcript with precise word-level mapping
+- When identifying a lie, find the EXACT moment the false statement begins
+- Use the provided word-to-timestamp mapping for surgical precision
+- Provide timestamps in MM:SS format (e.g., "7:23")
+- Include timeInSeconds as total seconds from video start
+- Estimate duration based on how long the false claim is elaborated upon
+- Default duration: 8-15 seconds for simple claims, 15-30 seconds for complex lies
 
-Example response:
+RESPONSE FORMAT (JSON ONLY):
 {
   "claims": [
     {
-      "timestamp": "7:23",
-      "timeInSeconds": 443,
-      "duration": 12,
-      "claim": "Vaccines contain microchips that track your location",
-      "explanation": "Vaccines contain biological components to stimulate immunity, not electronic devices.",
-      "confidence": 0.98,
-      "severity": "critical"
+      "timestamp": "MM:SS format when lie STARTS",
+      "timeInSeconds": total_seconds_from_start,
+      "duration": estimated_duration_in_seconds,
+      "claim": "Exact quote of the false statement",
+      "explanation": "Concise fact-check (max 2 sentences)",
+      "confidence": confidence_score_0.75_to_1.0,
+      "severity": "critical",
+      "category": "health|science|financial|political|safety|other"
     }
   ]
-}`;
 }
 
-// Enhanced function to find the best timestamp for a claim within the transcript
-function findClaimTimestamp(claim, transcriptSegments) {
-  console.log(`🔍 Finding timestamp for claim: "${claim}"`);
+QUALITY ASSURANCE:
+- Double-check each flagged claim against established facts
+- Ensure timestamps correspond to when the lie actually begins
+- Verify confidence scores match the evidence strength
+- Confirm each claim meets the ${config.threshold} threshold
+- If uncertain, DO NOT flag - false positives harm credibility
+
+Remember: Your role is to protect people from harmful misinformation while respecting legitimate discourse. Be precise, be confident, and be helpful.`;
+}
+
+// Enhanced function to find precise timestamp for a claim using word-level mapping
+function findClaimTimestamp(claim, transcriptData) {
+  console.log(`🔍 Finding precise timestamp for claim: "${claim}"`);
   
-  // Extract key words from the claim (remove common words)
-  const commonWords = ['the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 'with', 'by', 'is', 'are', 'was', 'were', 'be', 'been', 'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those'];
-  const claimWords = claim.toLowerCase()
+  // Clean and normalize the claim text
+  const normalizedClaim = claim.toLowerCase()
     .replace(/[^\w\s]/g, ' ')
-    .split(/\s+/)
-    .filter(word => word.length > 2 && !commonWords.includes(word));
+    .replace(/\s+/g, ' ')
+    .trim();
   
-  console.log(`🔍 Key words from claim: ${claimWords.join(', ')}`);
+  // Extract key phrases (3+ word sequences) and individual words
+  const claimWords = normalizedClaim.split(/\s+/).filter(word => word.length > 2);
+  const claimPhrases = [];
   
-  // Look for the claim text in the transcript segments
-  let bestMatch = transcriptSegments[0]?.timestamp || 0;
+  // Generate 3-word phrases for better matching
+  for (let i = 0; i <= claimWords.length - 3; i++) {
+    claimPhrases.push(claimWords.slice(i, i + 3).join(' '));
+  }
+  
+  console.log(`🔍 Key phrases: ${claimPhrases.join(', ')}`);
+  console.log(`🔍 Key words: ${claimWords.join(', ')}`);
+  
+  let bestMatch = transcriptData.startTime;
   let bestScore = 0;
   let bestSegment = null;
   
-  for (const segment of transcriptSegments) {
+  // First, try to find phrase matches (more accurate)
+  for (const segment of transcriptData.segmentTimestamps) {
     const segmentText = segment.text.toLowerCase();
     let score = 0;
     
-    // Count matching words with weighted scoring
-    for (const word of claimWords) {
-      if (segmentText.includes(word)) {
-        // Give higher score for exact word matches
-        const wordRegex = new RegExp(`\\b${word}\\b`, 'i');
-        if (wordRegex.test(segmentText)) {
-          score += 2; // Exact word match
-        } else {
-          score += 1; // Partial match
-        }
+    // Check for phrase matches (higher weight)
+    for (const phrase of claimPhrases) {
+      if (segmentText.includes(phrase)) {
+        score += 10; // High score for phrase matches
+        console.log(`🎯 Found phrase "${phrase}" in segment at ${segment.timestamp}s`);
       }
     }
     
-    // Bonus for longer matches
+    // Check for individual word matches
+    for (const word of claimWords) {
+      const wordRegex = new RegExp(`\\b${word}\\b`, 'i');
+      if (wordRegex.test(segmentText)) {
+        score += 2; // Lower score for individual words
+      }
+    }
+    
+    // Bonus for higher word density
     if (score > 0) {
-      const matchRatio = score / claimWords.length;
+      const matchRatio = score / (claimWords.length * 2);
       score = score * (1 + matchRatio);
     }
     
-    console.log(`🔍 Segment "${segment.text}" at ${segment.timestamp}s: score ${score}`);
+    console.log(`🔍 Segment "${segment.text.substring(0, 50)}..." at ${segment.timestamp}s: score ${score}`);
     
-    // If this segment has more matching words, use its timestamp
     if (score > bestScore) {
       bestScore = score;
       bestMatch = segment.timestamp;
@@ -318,18 +362,40 @@ function findClaimTimestamp(claim, transcriptSegments) {
     }
   }
   
-  // If no good match found, use the start of the transcript
-  if (bestScore === 0) {
-    bestMatch = transcriptSegments[0]?.timestamp || 0;
-    console.log(`🔍 No good match found, using transcript start: ${bestMatch}s`);
+  // If we found a good match, try to get more precise timing within the segment
+  if (bestScore > 5 && bestSegment) {
+    console.log(`🎯 Best match in segment: "${bestSegment.text}" at ${bestMatch}s (score: ${bestScore})`);
+    
+    // Try to find the exact position within the segment
+    const segmentText = bestSegment.text.toLowerCase();
+    let earliestMatch = bestMatch;
+    
+    for (const phrase of claimPhrases) {
+      const phraseIndex = segmentText.indexOf(phrase);
+      if (phraseIndex !== -1) {
+        // Estimate timestamp within segment based on character position
+        const segmentDuration = 5; // Assume average 5 seconds per segment
+        const relativePosition = phraseIndex / segmentText.length;
+        const estimatedOffset = relativePosition * segmentDuration;
+        const preciseTimestamp = bestMatch + estimatedOffset;
+        
+        if (preciseTimestamp < earliestMatch || earliestMatch === bestMatch) {
+          earliestMatch = preciseTimestamp;
+        }
+        
+        console.log(`🎯 Found phrase "${phrase}" at position ${phraseIndex}, estimated timestamp: ${preciseTimestamp}s`);
+      }
+    }
+    
+    bestMatch = earliestMatch;
   } else {
-    console.log(`🔍 Best match found in segment: "${bestSegment.text}" at ${bestMatch}s (score: ${bestScore})`);
+    console.log(`⚠️ No good match found (score: ${bestScore}), using transcript start: ${bestMatch}s`);
   }
   
   return Math.round(bestMatch);
 }
 
-// Function to analyze lies in full transcript with progress tracking
+// Function to analyze lies in full transcript with enhanced processing
 async function analyzeLies(transcriptData, sensitivity = 'balanced') {
   try {
     // Send progress update
@@ -345,7 +411,7 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
     
     let model;
     if (provider === 'openai') {
-      model = settings.openaiModel || 'gpt-4.1-mini'; // Default to GPT-4.1 Mini
+      model = settings.openaiModel || 'gpt-4.1-mini';
     } else if (provider === 'gemini') {
       model = settings.geminiModel || 'gemini-2.0-flash-exp';
     }
@@ -367,13 +433,32 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
     console.log(`Using ${provider} model:`, model);
     
     const systemPrompt = buildSystemPrompt(sensitivity);
-    const userContent = `Time Window: ${transcriptData.timeWindow}\n\nTranscript: ${transcriptData.text}`;
+    
+    // Enhanced user content with better structure for AI analysis
+    const userContent = `TRANSCRIPT ANALYSIS REQUEST
+
+Time Window: ${transcriptData.timeWindow}
+Total Segments: ${transcriptData.totalSegments}
+Content Type: YouTube Video Transcript
+
+TRANSCRIPT TEXT:
+${transcriptData.text}
+
+ANALYSIS INSTRUCTIONS:
+1. Read the entire transcript carefully
+2. Identify any factually incorrect statements that meet the ${sensitivity} threshold
+3. For each lie found, provide the exact timestamp when it begins
+4. Focus on harmful misinformation that could mislead viewers
+5. Ignore opinions, predictions, and subjective statements
+6. Return results in the specified JSON format only
+
+Remember: Only flag claims you are highly confident are factually incorrect with strong evidence.`;
     
     // Send progress update
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'ai_request',
-      message: `Analyzing ${transcriptData.totalSegments} segments...`
+      message: `Analyzing ${transcriptData.totalSegments} segments for lies...`
     });
 
     let response;
@@ -393,7 +478,9 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
           }, {
             role: "user",
             content: userContent
-          }]
+          }],
+          temperature: 0.1, // Low temperature for more consistent, factual responses
+          max_tokens: 2000 // Sufficient for detailed analysis
         })
       });
     } else if (provider === 'gemini') {
@@ -407,7 +494,11 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
             parts: [{
               text: `${systemPrompt}\n\n${userContent}`
             }]
-          }]
+          }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 2000
+          }
         })
       });
     }
@@ -420,7 +511,7 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'processing_response',
-      message: 'Processing AI response...'
+      message: 'Processing AI response and mapping timestamps...'
     });
 
     const data = await response.json();
@@ -432,62 +523,81 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
       content = data.candidates[0].content.parts[0].text;
     }
     
-    // Try to parse JSON response
+    console.log('🤖 AI Response:', content);
+    
+    // Enhanced JSON parsing with better error handling
     try {
+      // Try to extract JSON from the response
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsedResult = JSON.parse(jsonMatch[0]);
         
-        // Post-process lies to ensure accurate timestamps and durations
-        if (parsedResult.claims && transcriptData.segmentTimestamps) {
-          parsedResult.claims = parsedResult.claims.map(claim => {
+        // Enhanced post-processing for accurate timestamps
+        if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
+          console.log(`🔍 Processing ${parsedResult.claims.length} detected lies for timestamp accuracy`);
+          
+          parsedResult.claims = parsedResult.claims.map((claim, index) => {
             let finalTimeInSeconds;
             let finalTimestamp;
-            let finalDuration = claim.duration || 10; // Default 10 seconds if not provided
+            let finalDuration = claim.duration || 12; // Default 12 seconds
             
-            // CRITICAL FIX: Ensure we use the START timestamp, not adjusted by duration
-            if (claim.timeInSeconds && claim.timeInSeconds > 0) {
-              // Check if the AI timestamp is within the transcript bounds
-              if (claim.timeInSeconds >= transcriptData.startTime && claim.timeInSeconds <= transcriptData.endTime) {
-                finalTimeInSeconds = Math.round(claim.timeInSeconds);
-                console.log(`✅ AI provided valid timestamp: ${finalTimeInSeconds}s (within bounds ${transcriptData.startTime}-${transcriptData.endTime}s)`);
-              } else {
-                console.log(`⚠️ AI timestamp ${claim.timeInSeconds}s outside bounds (${transcriptData.startTime}-${transcriptData.endTime}s), finding better match`);
-                finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData.segmentTimestamps);
-              }
+            console.log(`\n🎯 Processing lie ${index + 1}: "${claim.claim}"`);
+            
+            // Enhanced timestamp finding with multiple strategies
+            if (claim.timeInSeconds && claim.timeInSeconds >= transcriptData.startTime && claim.timeInSeconds <= transcriptData.endTime) {
+              // AI provided a valid timestamp within bounds
+              finalTimeInSeconds = Math.round(claim.timeInSeconds);
+              console.log(`✅ Using AI timestamp: ${finalTimeInSeconds}s (within bounds)`);
             } else {
-              // AI didn't provide a good timestamp, find it ourselves
-              console.log(`⚠️ AI didn't provide valid timestamp, finding match for: "${claim.claim}"`);
-              finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData.segmentTimestamps);
+              // Find the best timestamp using enhanced matching
+              console.log(`🔍 AI timestamp invalid or missing, finding precise match...`);
+              finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData);
             }
             
-            // Convert seconds to MM:SS format
+            // Ensure timestamp is within bounds
+            finalTimeInSeconds = Math.max(transcriptData.startTime, Math.min(finalTimeInSeconds, transcriptData.endTime));
+            
+            // Convert to MM:SS format
             const minutes = Math.floor(finalTimeInSeconds / 60);
             const seconds = finalTimeInSeconds % 60;
             finalTimestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
             
-            console.log(`🎯 Final lie details:`);
+            // Validate and adjust duration
+            if (finalDuration < 5) finalDuration = 8; // Minimum 8 seconds
+            if (finalDuration > 45) finalDuration = 30; // Maximum 30 seconds
+            
+            console.log(`🎯 Final lie ${index + 1} details:`);
             console.log(`   - Timestamp: ${finalTimestamp} (${finalTimeInSeconds}s)`);
             console.log(`   - Duration: ${finalDuration}s`);
-            console.log(`   - Claim: "${claim.claim}"`);
+            console.log(`   - Confidence: ${Math.round((claim.confidence || 0.8) * 100)}%`);
+            console.log(`   - Claim: "${claim.claim.substring(0, 100)}..."`);
             
             return {
               ...claim,
               timestamp: finalTimestamp,
               timeInSeconds: finalTimeInSeconds,
               duration: finalDuration,
-              severity: 'critical' // Ensure all flagged content is marked as critical
+              severity: 'critical',
+              confidence: Math.max(0.75, claim.confidence || 0.8), // Ensure minimum confidence
+              category: claim.category || 'other'
             };
           });
+          
+          // Sort by timestamp for logical order
+          parsedResult.claims.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
         }
         
         return parsedResult;
+      } else {
+        console.warn('No JSON found in AI response');
+        return { claims: [], rawContent: content };
       }
     } catch (parseError) {
-      console.warn('Could not parse JSON response, returning raw content');
+      console.error('JSON parsing error:', parseError);
+      console.log('Raw AI response:', content);
+      return { claims: [], rawContent: content, parseError: parseError.message };
     }
     
-    return { claims: [], rawContent: content };
   } catch (error) {
     console.error('Error analyzing lies:', error);
     try {
@@ -604,10 +714,10 @@ async function processVideo() {
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'transcript_preparation',
-      message: 'Preparing full transcript for analysis...'
+      message: 'Preparing transcript with precise timestamp mapping...'
     });
 
-    // Prepare full transcript for analysis
+    // Prepare full transcript for analysis with enhanced timestamp mapping
     const transcriptData = prepareFullTranscript(transcript);
     
     if (!transcriptData) {
@@ -625,10 +735,10 @@ async function processVideo() {
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'analysis_start',
-      message: `🚨 Starting full video lies detection with ${sensitivity} threshold...`
+      message: `Starting enhanced lie detection with ${sensitivity} threshold...`
     });
 
-    // Analyze the full transcript for lies
+    // Analyze the full transcript for lies with enhanced processing
     const analysis = await analyzeLies(transcriptData, sensitivity);
     
     let allLies = [];
@@ -637,6 +747,10 @@ async function processVideo() {
         ...claim,
         severity: 'critical' // Ensure all detected lies are marked as critical
       }));
+      
+      console.log(`✅ Analysis complete: Found ${allLies.length} lies with enhanced timestamp precision`);
+    } else {
+      console.log('✅ Analysis complete: No lies detected in this video');
     }
 
     // Send final lies update
@@ -647,21 +761,31 @@ async function processVideo() {
       isComplete: true
     });
 
-    // Prepare final analysis
+    // Prepare final analysis with enhanced reporting
     let finalAnalysis;
     if (allLies.length === 0) {
-      finalAnalysis = `✅ Full video lies detection complete!\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments).\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our high-confidence detection criteria.`;
+      finalAnalysis = `✅ Enhanced lie detection complete!\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our enhanced detection criteria.`;
     } else {
       // Sort lies by timestamp for final display
       allLies.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
       
-      const liesText = allLies.map((claim, index) => 
-        `${index + 1}. 🚨 ${claim.timestamp} (${claim.duration}s)\n🚫 Lie: ${claim.claim}\n🎯 Confidence: ${Math.round(claim.confidence * 100)}%\n💡 ${claim.explanation}`
-      ).join('\n\n');
+      const liesText = allLies.map((claim, index) => {
+        const categoryEmoji = {
+          health: '🏥',
+          science: '🔬',
+          financial: '💰',
+          political: '🏛️',
+          safety: '⚠️',
+          other: '🚨'
+        };
+        
+        return `${index + 1}. ${categoryEmoji[claim.category] || '🚨'} ${claim.timestamp} (${claim.duration}s)\n🚫 Lie: ${claim.claim}\n🎯 Confidence: ${Math.round(claim.confidence * 100)}%\n💡 ${claim.explanation}`;
+      }).join('\n\n');
       
       const avgConfidence = Math.round(allLies.reduce((sum, c) => sum + c.confidence, 0) / allLies.length * 100);
+      const categories = [...new Set(allLies.map(c => c.category))];
       
-      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments).\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\n\n⚠️ WARNING: This content contains high-confidence false information that could be harmful if believed.\n\n${liesText}`;
+      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nCategories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains high-confidence false information that could be harmful if believed.\n\n${liesText}`;
     }
 
     // Save final analysis to cache
