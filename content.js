@@ -458,6 +458,13 @@ RESPONSE FORMAT (JSON ONLY):
   ]
 }
 
+JSON FORMATTING RULES:
+- Use double quotes for all JSON strings
+- For quotes inside claim text, use single quotes or escape properly
+- Example: "claim": "He said 'vaccines are dangerous' which is false"
+- Keep explanations under 150 characters to avoid parsing issues
+- Ensure proper JSON structure with no trailing commas
+
 IMPORTANT: 
 - Do NOT include timestamp, timeInSeconds, or duration fields
 - Only include the exact quoted text in the "claim" field
@@ -552,6 +559,52 @@ function findClaimTimestampFromOriginal(claim, transcriptData) {
   } else {
     console.log(`⚠️ No good match found (best score: ${bestScore}), using transcript start`);
     return transcriptData.startTime;
+  }
+}
+
+// Function to safely parse AI JSON response with proper error handling
+function safeParseAIResponse(content) {
+  console.log('🔍 Parsing AI response...');
+  
+  try {
+    // First, try to find JSON block in the response
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn('No JSON block found in AI response');
+      return { claims: [], rawContent: content, parseError: 'No JSON found' };
+    }
+    
+    let jsonString = jsonMatch[0];
+    console.log('📝 Raw JSON string length:', jsonString.length);
+    
+    // Simple cleanup without problematic regex
+    jsonString = jsonString
+      // Remove trailing commas before closing braces/brackets
+      .replace(/,(\s*[}\]])/g, '$1')
+      // Fix common newline issues
+      .replace(/\n/g, ' ')
+      .replace(/\r/g, ' ')
+      // Fix multiple spaces
+      .replace(/\s+/g, ' ');
+    
+    console.log('📝 Cleaned JSON string for parsing');
+    
+    // Try to parse the cleaned JSON
+    const parsedResult = JSON.parse(jsonString);
+    console.log('✅ Successfully parsed JSON response');
+    
+    return parsedResult;
+    
+  } catch (parseError) {
+    console.error('❌ JSON parsing failed:', parseError.message);
+    console.log('📝 Raw content that failed to parse:', content.substring(0, 500));
+    
+    // Return empty claims array with error info
+    return { 
+      claims: [], 
+      rawContent: content, 
+      parseError: parseError.message 
+    };
   }
 }
 
@@ -686,72 +739,64 @@ Remember: Only flag claims you are highly confident are factually incorrect with
     
     console.log('🤖 AI Response:', content);
     
-    // Enhanced JSON parsing with better error handling
-    try {
-      // Try to extract JSON from the response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsedResult = JSON.parse(jsonMatch[0]);
+    // Use the safe JSON parser
+    const parsedResult = safeParseAIResponse(content);
+    
+    if (parsedResult.parseError) {
+      console.error('Failed to parse AI response:', parsedResult.parseError);
+      return { claims: [], rawContent: content };
+    }
+    
+    // Enhanced post-processing using original transcript timestamps
+    if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
+      console.log(`🔍 Processing ${parsedResult.claims.length} detected lies for original timestamp mapping`);
+      
+      parsedResult.claims = parsedResult.claims.map((claim, index) => {
+        console.log(`\n🎯 Processing lie ${index + 1}: "${claim.claim}"`);
         
-        // Enhanced post-processing using original transcript timestamps
-        if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
-          console.log(`🔍 Processing ${parsedResult.claims.length} detected lies for original timestamp mapping`);
-          
-          parsedResult.claims = parsedResult.claims.map((claim, index) => {
-            console.log(`\n🎯 Processing lie ${index + 1}: "${claim.claim}"`);
-            
-            // Find the timestamp from the original transcript using the exact claim text
-            const originalTimestamp = findClaimTimestampFromOriginal(claim.claim, transcriptData);
-            
-            // Convert to MM:SS format
-            const minutes = Math.floor(originalTimestamp / 60);
-            const seconds = originalTimestamp % 60;
-            const formattedTimestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            
-            // Estimate duration based on claim length (8-25 seconds)
-            const claimLength = claim.claim.length;
-            let estimatedDuration;
-            if (claimLength < 100) {
-              estimatedDuration = 8;
-            } else if (claimLength < 200) {
-              estimatedDuration = 12;
-            } else if (claimLength < 300) {
-              estimatedDuration = 18;
-            } else {
-              estimatedDuration = 25;
-            }
-            
-            console.log(`🎯 Final lie ${index + 1} details:`);
-            console.log(`   - Original Timestamp: ${formattedTimestamp} (${originalTimestamp}s)`);
-            console.log(`   - Estimated Duration: ${estimatedDuration}s`);
-            console.log(`   - Confidence: ${Math.round((claim.confidence || 0.8) * 100)}%`);
-            console.log(`   - Claim: "${claim.claim.substring(0, 100)}..."`);
-            
-            return {
-              ...claim,
-              timestamp: formattedTimestamp,
-              timeInSeconds: Math.round(originalTimestamp),
-              duration: estimatedDuration,
-              severity: 'critical',
-              confidence: Math.max(0.75, claim.confidence || 0.8), // Ensure minimum confidence
-              category: claim.category || 'other'
-            };
-          });
-          
-          // Sort by timestamp for logical order
-          parsedResult.claims.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
+        // Find the timestamp from the original transcript using the exact claim text
+        const originalTimestamp = findClaimTimestampFromOriginal(claim.claim, transcriptData);
+        
+        // Convert to MM:SS format
+        const minutes = Math.floor(originalTimestamp / 60);
+        const seconds = originalTimestamp % 60;
+        const formattedTimestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+        
+        // Estimate duration based on claim length (8-25 seconds)
+        const claimLength = claim.claim.length;
+        let estimatedDuration;
+        if (claimLength < 100) {
+          estimatedDuration = 8;
+        } else if (claimLength < 200) {
+          estimatedDuration = 12;
+        } else if (claimLength < 300) {
+          estimatedDuration = 18;
+        } else {
+          estimatedDuration = 25;
         }
         
-        return parsedResult;
-      } else {
-        console.warn('No JSON found in AI response');
-        return { claims: [], rawContent: content };
-      }
-    } catch (parseError) {
-      console.error('JSON parsing error:', parseError);
-      console.log('Raw AI response:', content);
-      return { claims: [], rawContent: content, parseError: parseError.message };
+        console.log(`🎯 Final lie ${index + 1} details:`);
+        console.log(`   - Original Timestamp: ${formattedTimestamp} (${originalTimestamp}s)`);
+        console.log(`   - Estimated Duration: ${estimatedDuration}s`);
+        console.log(`   - Confidence: ${Math.round((claim.confidence || 0.8) * 100)}%`);
+        console.log(`   - Claim: "${claim.claim.substring(0, 100)}..."`);
+        
+        return {
+          ...claim,
+          timestamp: formattedTimestamp,
+          timeInSeconds: Math.round(originalTimestamp),
+          duration: estimatedDuration,
+          severity: 'critical',
+          confidence: Math.max(0.75, claim.confidence || 0.8), // Ensure minimum confidence
+          category: claim.category || 'other'
+        };
+      });
+      
+      // Sort by timestamp for logical order
+      parsedResult.claims.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
     }
+    
+    return parsedResult;
     
   } catch (error) {
     console.error('Error analyzing lies:', error);
