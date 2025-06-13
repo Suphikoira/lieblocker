@@ -781,13 +781,13 @@ async function updateVideoStatsImmediate(videoId, title) {
       
       // Check if analysis has claims array directly (new format)
       if (analysis.claims && Array.isArray(analysis.claims)) {
-        lies = analysis.claims.filter(c => c.severity === 'critical');
+        lies = analysis.claims;
         liesCount = lies.length;
         console.log('📊 Using new format - Lies found:', liesCount);
       }
       // Check if analysis has nested analysis object with claims
       else if (analysis.analysis && typeof analysis.analysis === 'object' && analysis.analysis.claims) {
-        lies = analysis.analysis.claims.filter(c => c.severity === 'critical');
+        lies = analysis.analysis.claims;
         liesCount = lies.length;
         console.log('📊 Using nested format - Lies found:', liesCount);
       }
@@ -801,7 +801,13 @@ async function updateVideoStatsImmediate(videoId, title) {
         
         // For legacy format, create mock lies for display
         lies = Array(liesCount).fill(null).map((_, i) => ({
-          severity: 'critical'
+          severity: 'high',
+          claim: 'Legacy lie detected',
+          explanation: 'This lie was detected in a previous analysis format',
+          timestamp: '0:00',
+          timeInSeconds: 0,
+          confidence: 0.8,
+          category: 'other'
         }));
       }
       
@@ -855,6 +861,8 @@ function renderLiesDetails(lies, filterSeverity = null) {
   
   if (!liesListElement || !noLiesElement) return;
   
+  console.log('🎯 Rendering lies details:', lies);
+  
   if (!lies || lies.length === 0) {
     liesListElement.style.display = 'none';
     noLiesElement.style.display = 'block';
@@ -892,7 +900,7 @@ function renderLiesDetails(lies, filterSeverity = null) {
         </div>
         <div class="lie-meta">
           <span class="lie-confidence">Confidence: ${Math.round((lie.confidence || 0) * 100)}%</span>
-          <span class="lie-severity critical">LIE</span>
+          <span class="lie-severity ${lie.severity || 'medium'}">${(lie.severity || 'medium').toUpperCase()}</span>
         </div>
       </div>
     `;
