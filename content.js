@@ -244,6 +244,12 @@ async function getCachedAnalysis(videoId) {
       
       if (cacheAge < maxAge) {
         console.log('📋 Found cached analysis for video:', videoId);
+        
+        // Create LieBlockerDetectedLies object from cached data
+        if (cached.claims && cached.claims.length > 0) {
+          storeDetectedLiesForDownload(cached.claims, videoId);
+        }
+        
         return cached;
       } else {
         console.log('⏰ Cached analysis expired for video:', videoId);
@@ -280,9 +286,7 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     console.log('💾 Total lies saved:', cacheData.claims.length);
     
     // Store detected lies for download
-    if (lies.length > 0) {
-      storeDetectedLiesForDownload(lies, videoId);
-    }
+    storeDetectedLiesForDownload(lies, videoId);
     
     // Notify popup of cache update
     chrome.runtime.sendMessage({
@@ -296,13 +300,33 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
   }
 }
 
-// Function to store detected lies for download
+// Function to store detected lies for download - ALWAYS create the object
 function storeDetectedLiesForDownload(lies, videoId) {
+  // Calculate severity breakdown
+  const severityBreakdown = {
+    high: lies.filter(l => l.severity === 'high').length,
+    medium: lies.filter(l => l.severity === 'medium').length,
+    low: lies.filter(l => l.severity === 'low').length
+  };
+  
+  // Calculate average confidence
+  const averageConfidence = lies.length > 0 
+    ? lies.reduce((sum, l) => sum + (l.confidence || 0), 0) / lies.length 
+    : 0;
+  
+  // Get unique categories
+  const categories = [...new Set(lies.map(l => l.category || 'other'))];
+  
   window.LieBlockerDetectedLies = {
     videoId: videoId,
     detectedAt: new Date().toISOString(),
     totalLies: lies.length,
     lies: lies,
+    summary: {
+      severityBreakdown: severityBreakdown,
+      categories: categories,
+      averageConfidence: averageConfidence
+    },
     
     downloadLiesData: function() {
       const data = {
@@ -310,14 +334,11 @@ function storeDetectedLiesForDownload(lies, videoId) {
         detectedAt: this.detectedAt,
         totalLies: this.totalLies,
         lies: this.lies,
-        summary: {
-          severityBreakdown: {
-            high: this.lies.filter(l => l.severity === 'high').length,
-            medium: this.lies.filter(l => l.severity === 'medium').length,
-            low: this.lies.filter(l => l.severity === 'low').length
-          },
-          categories: [...new Set(this.lies.map(l => l.category))],
-          averageConfidence: this.lies.reduce((sum, l) => sum + l.confidence, 0) / this.lies.length
+        summary: this.summary,
+        metadata: {
+          analysisVersion: '2.1',
+          downloadedAt: new Date().toISOString(),
+          dataFormat: 'LieBlocker Detected Lies Export'
         }
       };
       
@@ -330,10 +351,33 @@ function storeDetectedLiesForDownload(lies, videoId) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+      
+      console.log('📥 Downloaded lies data:', data);
+    },
+    
+    // Helper methods for console access
+    getLiesByTimestamp: function(timestamp) {
+      return this.lies.filter(lie => lie.timestamp === timestamp);
+    },
+    
+    getLiesBySeverity: function(severity) {
+      return this.lies.filter(lie => lie.severity === severity);
+    },
+    
+    getLiesByCategory: function(category) {
+      return this.lies.filter(lie => lie.category === category);
+    },
+    
+    getHighConfidenceLies: function(threshold = 0.8) {
+      return this.lies.filter(lie => (lie.confidence || 0) >= threshold);
     }
   };
   
   console.log('🚨 Detected lies data stored for download. Access via window.LieBlockerDetectedLies');
+  console.log(`🚨 Total lies: ${lies.length}`);
+  console.log(`🚨 Severity breakdown:`, severityBreakdown);
+  console.log(`🚨 Categories:`, categories);
+  console.log(`🚨 Average confidence: ${Math.round(averageConfidence * 100)}%`);
 }
 
 // Function to clean old cache entries (keep only last 50 analyses)
@@ -795,6 +839,9 @@ async function processVideo() {
       return;
     }
 
+    // Initialize empty LieBlockerDetectedLies object immediately
+    storeDetectedLiesForDownload([], videoId);
+
     // Notify background script that analysis is starting
     chrome.runtime.sendMessage({
       type: 'startAnalysis',
@@ -894,6 +941,9 @@ async function processVideo() {
     } else {
       console.log('✅ Analysis complete: No lies detected in this video');
     }
+
+    // Update the LieBlockerDetectedLies object with final results
+    storeDetectedLiesForDownload(allLies, videoId);
 
     // Send final lies update
     chrome.runtime.sendMessage({
@@ -1248,6 +1298,11 @@ function handlePageNavigation() {
     currentVideoLies = [];
     skippedLiesInSession.clear();
     lastVideoId = currentVideoId;
+    
+    // Clear previous video data objects
+    window.LieBlockerTranscriptData = null;
+    window.LieBlockerAnalysisData = null;
+    window.LieBlockerDetectedLies = null;
   }
 }
 
