@@ -91,6 +91,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupTabNavigation();
     setupEventListeners();
     setupRealTimeUpdates();
+    setupDownloadLinks();
     
     // Hide loading state
     hideLoadingState();
@@ -578,6 +579,94 @@ function setupLiesCircleClickHandler() {
   }
 }
 
+function setupDownloadLinks() {
+  // Download transcript JSON
+  const downloadTranscriptJson = document.getElementById('download-transcript-json');
+  if (downloadTranscriptJson) {
+    downloadTranscriptJson.addEventListener('click', () => {
+      if (window.LieBlockerTranscriptData) {
+        window.LieBlockerTranscriptData.downloadJSON();
+        showNotification('Transcript JSON downloaded', 'success');
+      } else {
+        showNotification('No transcript data available. Analyze a video first.', 'warning');
+      }
+    });
+  }
+  
+  // Download transcript CSV
+  const downloadTranscriptCsv = document.getElementById('download-transcript-csv');
+  if (downloadTranscriptCsv) {
+    downloadTranscriptCsv.addEventListener('click', () => {
+      if (window.LieBlockerTranscriptData) {
+        window.LieBlockerTranscriptData.downloadCSV();
+        showNotification('Transcript CSV downloaded', 'success');
+      } else {
+        showNotification('No transcript data available. Analyze a video first.', 'warning');
+      }
+    });
+  }
+  
+  // Download analysis data
+  const downloadAnalysisData = document.getElementById('download-analysis-data');
+  if (downloadAnalysisData) {
+    downloadAnalysisData.addEventListener('click', () => {
+      if (window.LieBlockerAnalysisData) {
+        window.LieBlockerAnalysisData.downloadAnalysisData();
+        showNotification('Analysis data downloaded', 'success');
+      } else {
+        showNotification('No analysis data available. Analyze a video first.', 'warning');
+      }
+    });
+  }
+  
+  // Download lies data
+  const downloadLiesData = document.getElementById('download-lies-data');
+  if (downloadLiesData) {
+    downloadLiesData.addEventListener('click', () => {
+      if (window.LieBlockerDetectedLies) {
+        window.LieBlockerDetectedLies.downloadLiesData();
+        showNotification('Detected lies data downloaded', 'success');
+      } else {
+        showNotification('No lies data available. Analyze a video first.', 'warning');
+      }
+    });
+  }
+}
+
+function updateDownloadLinksAvailability() {
+  const downloadSection = document.getElementById('download-section');
+  const transcriptJsonBtn = document.getElementById('download-transcript-json');
+  const transcriptCsvBtn = document.getElementById('download-transcript-csv');
+  const analysisDataBtn = document.getElementById('download-analysis-data');
+  const liesDataBtn = document.getElementById('download-lies-data');
+  
+  // Check if any data is available
+  const hasTranscriptData = !!window.LieBlockerTranscriptData;
+  const hasAnalysisData = !!window.LieBlockerAnalysisData;
+  const hasLiesData = !!window.LieBlockerDetectedLies;
+  
+  // Show download section if any data is available
+  if (hasTranscriptData || hasAnalysisData || hasLiesData) {
+    if (downloadSection) {
+      downloadSection.style.display = 'block';
+    }
+  }
+  
+  // Update individual button states
+  if (transcriptJsonBtn) {
+    transcriptJsonBtn.classList.toggle('disabled', !hasTranscriptData);
+  }
+  if (transcriptCsvBtn) {
+    transcriptCsvBtn.classList.toggle('disabled', !hasTranscriptData);
+  }
+  if (analysisDataBtn) {
+    analysisDataBtn.classList.toggle('disabled', !hasAnalysisData);
+  }
+  if (liesDataBtn) {
+    liesDataBtn.classList.toggle('disabled', !hasLiesData);
+  }
+}
+
 async function saveSupadataToken() {
   const tokenInput = document.getElementById('supadata-token');
   
@@ -825,6 +914,9 @@ async function updateVideoStatsImmediate(videoId, title) {
       updateLiesIndicator([]); // Clear lies indicator
       currentVideoLies = []; // Clear lies
     }
+    
+    // Update download links availability
+    updateDownloadLinksAvailability();
     
   } catch (error) {
     console.error('Error updating video stats:', error);
@@ -1094,6 +1186,12 @@ async function clearCache() {
         noLiesElement.textContent = 'No lies detected for the current video.';
       }
       
+      // Clear download data and hide download section
+      window.LieBlockerTranscriptData = null;
+      window.LieBlockerAnalysisData = null;
+      window.LieBlockerDetectedLies = null;
+      updateDownloadLinksAvailability();
+      
       showNotification(`Cleared ${analysisKeys.length} cached analyses and reset all statistics`, 'success');
       
       // Refresh current video display
@@ -1330,6 +1428,9 @@ function handleAnalysisUpdate(data) {
       await checkCurrentVideo();
       await loadStats();
       
+      // Update download links availability
+      updateDownloadLinksAvailability();
+      
       // If we're on the lies tab, refresh it
       const liesTab = document.querySelector('.tab[data-tab="lies"]');
       if (liesTab && liesTab.classList.contains('active')) {
@@ -1376,6 +1477,11 @@ function handleLiesUpdate(message) {
     resetAnalysisUI();
     updateProgressIndicator('complete', `Full video analysis complete - ${currentVideoLies.length} lies found`);
     showNotification(`✅ Full video analysis complete! Found ${currentVideoLies.length} lies in 20 minutes.`, 'success', 5000);
+    
+    // Update download links availability after analysis is complete
+    setTimeout(() => {
+      updateDownloadLinksAvailability();
+    }, 1000);
   }
 }
 

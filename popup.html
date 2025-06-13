@@ -656,8 +656,18 @@
       text-transform: uppercase;
     }
     
-    .lie-severity.critical {
-      background: #8b5a3c;
+    .lie-severity.high {
+      background: #dc3545;
+      color: white;
+    }
+    
+    .lie-severity.medium {
+      background: #ffc107;
+      color: #333;
+    }
+    
+    .lie-severity.low {
+      background: #28a745;
       color: white;
     }
     
@@ -679,6 +689,65 @@
     
     .model-selection.hidden {
       display: none;
+    }
+    
+    /* Download Links Styles */
+    .download-links {
+      margin-top: 12px;
+      padding: 12px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border: 1px solid #e9ecef;
+    }
+    
+    .download-link {
+      display: inline-block;
+      padding: 6px 12px;
+      margin: 4px 4px 4px 0;
+      background: #8b5a3c;
+      color: white;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      cursor: pointer;
+      border: none;
+    }
+    
+    .download-link:hover {
+      background: #6d4c41;
+      transform: translateY(-1px);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+    
+    .download-link:active {
+      transform: translateY(0);
+    }
+    
+    .download-link.disabled {
+      background: #ccc;
+      color: #666;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    
+    .download-link.disabled:hover {
+      background: #ccc;
+      transform: none;
+      box-shadow: none;
+    }
+    
+    .download-section {
+      margin-top: 8px;
+    }
+    
+    .download-label {
+      font-size: 12px;
+      color: #666;
+      margin-bottom: 6px;
+      font-weight: 600;
     }
   </style>
 </head>
@@ -722,6 +791,26 @@
       
       <div class="action-buttons">
         <button class="btn btn-primary" id="analyze-current">Analyze Current Video</button>
+      </div>
+      
+      <!-- Download Links Section -->
+      <div class="stats-card" id="download-section" style="display: none;">
+        <div class="stats-title">
+          <span>📥</span>
+          <span>Download Raw Data</span>
+        </div>
+        
+        <div class="download-section">
+          <div class="download-label">Transcript Data:</div>
+          <button class="download-link disabled" id="download-transcript-json">📄 Transcript JSON</button>
+          <button class="download-link disabled" id="download-transcript-csv">📊 Transcript CSV</button>
+        </div>
+        
+        <div class="download-section">
+          <div class="download-label">Analysis Data:</div>
+          <button class="download-link disabled" id="download-analysis-data">🔍 Analysis Data</button>
+          <button class="download-link disabled" id="download-lies-data">🚨 Detected Lies</button>
+        </div>
       </div>
     </div>
     

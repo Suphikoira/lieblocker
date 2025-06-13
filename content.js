@@ -25,6 +25,9 @@ async function getTranscript() {
     console.log('✅ Transcript received from background script');
     console.log(`✅ Successfully extracted ${response.data.length} transcript segments`);
     
+    // Store transcript data for download feature
+    storeTranscriptForDownload(response.data, videoId);
+    
     // Return the transcript segments directly since they already have timestamps
     return response.data;
 
@@ -40,6 +43,72 @@ async function getTranscript() {
     }
     return null;
   }
+}
+
+// Function to store transcript data for download feature
+function storeTranscriptForDownload(transcript, videoId) {
+  const formattedTranscript = transcript.map((segment, index) => {
+    const minutes = Math.floor(segment.start / 60);
+    const seconds = Math.floor(segment.start % 60);
+    const timestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    
+    return {
+      index: index + 1,
+      timestamp: timestamp,
+      timeInSeconds: Math.round(segment.start),
+      duration: segment.duration ? Math.round(segment.duration) : null,
+      text: segment.text.trim()
+    };
+  });
+  
+  // Store in global object for download access
+  window.LieBlockerTranscriptData = {
+    videoId: videoId,
+    extractedAt: new Date().toISOString(),
+    totalSegments: transcript.length,
+    segments: formattedTranscript,
+    
+    // Helper functions for download
+    downloadJSON: function() {
+      const data = {
+        videoId: this.videoId,
+        extractedAt: this.extractedAt,
+        totalSegments: this.totalSegments,
+        segments: this.segments
+      };
+      
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transcript-${this.videoId}-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    },
+    
+    downloadCSV: function() {
+      const csv = [
+        'Index,Timestamp,TimeInSeconds,Duration,Text',
+        ...this.segments.map(s => 
+          `${s.index},"${s.timestamp}",${s.timeInSeconds},${s.duration || ''},"${s.text.replace(/"/g, '""')}"`
+        )
+      ].join('\n');
+      
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transcript-${this.videoId}-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+  
+  console.log('📋 Transcript data stored for download. Access via window.LieBlockerTranscriptData');
 }
 
 // Function to prepare full transcript for analysis (limited to 20 minutes)
@@ -115,6 +184,9 @@ function prepareFullTranscript(transcript) {
   const endMinutes = Math.floor(endTime / 60);
   const endSeconds = Math.floor(endTime % 60);
   
+  // Store analysis transcript data for download
+  storeAnalysisTranscriptForDownload(fullText, segmentTimestamps, wordToTimestampMap, `0:00 - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`);
+  
   return {
     text: fullText.trim(),
     startTime: startTime,
@@ -124,6 +196,39 @@ function prepareFullTranscript(transcript) {
     timeWindow: `0:00 - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`,
     totalSegments: filteredTranscript.length
   };
+}
+
+// Function to store analysis transcript data for download
+function storeAnalysisTranscriptForDownload(fullText, segmentTimestamps, wordToTimestampMap, timeWindow) {
+  window.LieBlockerAnalysisData = {
+    fullText: fullText,
+    segmentTimestamps: segmentTimestamps,
+    timeWindow: timeWindow,
+    processedAt: new Date().toISOString(),
+    
+    downloadAnalysisData: function() {
+      const data = {
+        fullText: this.fullText,
+        segmentTimestamps: this.segmentTimestamps,
+        timeWindow: this.timeWindow,
+        processedAt: this.processedAt,
+        textLength: this.fullText.length,
+        totalSegments: this.segmentTimestamps.length
+      };
+      
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `analysis-data-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+  
+  console.log('📊 Analysis transcript data stored for download. Access via window.LieBlockerAnalysisData');
 }
 
 // Function to get cached analysis results
@@ -174,6 +279,11 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     console.log('💾 Analysis saved to cache for video:', videoId);
     console.log('💾 Total lies saved:', cacheData.claims.length);
     
+    // Store detected lies for download
+    if (lies.length > 0) {
+      storeDetectedLiesForDownload(lies, videoId);
+    }
+    
     // Notify popup of cache update
     chrome.runtime.sendMessage({
       type: 'cacheUpdated',
@@ -184,6 +294,46 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
   } catch (error) {
     console.error('Error saving analysis to cache:', error);
   }
+}
+
+// Function to store detected lies for download
+function storeDetectedLiesForDownload(lies, videoId) {
+  window.LieBlockerDetectedLies = {
+    videoId: videoId,
+    detectedAt: new Date().toISOString(),
+    totalLies: lies.length,
+    lies: lies,
+    
+    downloadLiesData: function() {
+      const data = {
+        videoId: this.videoId,
+        detectedAt: this.detectedAt,
+        totalLies: this.totalLies,
+        lies: this.lies,
+        summary: {
+          severityBreakdown: {
+            high: this.lies.filter(l => l.severity === 'high').length,
+            medium: this.lies.filter(l => l.severity === 'medium').length,
+            low: this.lies.filter(l => l.severity === 'low').length
+          },
+          categories: [...new Set(this.lies.map(l => l.category))],
+          averageConfidence: this.lies.reduce((sum, l) => sum + l.confidence, 0) / this.lies.length
+        }
+      };
+      
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `detected-lies-${this.videoId}-${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  };
+  
+  console.log('🚨 Detected lies data stored for download. Access via window.LieBlockerDetectedLies');
 }
 
 // Function to clean old cache entries (keep only last 50 analyses)
