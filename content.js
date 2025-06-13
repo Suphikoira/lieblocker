@@ -181,11 +181,12 @@ function prepareFullTranscript(transcript) {
   // Build the full text with precise timestamp mapping
   let fullText = '';
   let segmentTimestamps = [];
-  let wordToTimestampMap = new Map(); // Map character positions to timestamps
+  let wordToTimestampMap = new Map(); // Map words to their timestamps
   
   for (const segment of filteredTranscript) {
     const segmentText = segment.text.trim();
     if (segmentText) {
+      const words = segmentText.split(/\s+/);
       const segmentStartPos = fullText.length;
       
       // Add space if not first segment
@@ -196,18 +197,27 @@ function prepareFullTranscript(transcript) {
       // Add the segment text
       fullText += segmentText;
       
-      // Map every character position in this segment to its timestamp
-      const actualStartPos = segmentStartPos + (fullText.length > segmentText.length ? 1 : 0);
-      for (let pos = actualStartPos; pos < fullText.length; pos++) {
-        wordToTimestampMap.set(pos, segment.start);
+      // Create detailed word mapping for precise timestamp matching
+      let wordStartPos = segmentStartPos + (fullText.length > segmentText.length ? 1 : 0);
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i];
+        const wordEndPos = wordStartPos + word.length;
+        
+        // Map each word position to its timestamp
+        for (let pos = wordStartPos; pos < wordEndPos; pos++) {
+          wordToTimestampMap.set(pos, segment.start);
+        }
+        
+        // Move to next word position (including space)
+        wordStartPos = wordEndPos + 1;
       }
       
       segmentTimestamps.push({
         text: segmentText,
         timestamp: segment.start,
-        startPos: actualStartPos,
+        startPos: segmentStartPos,
         endPos: fullText.length,
-        words: segmentText.split(/\s+/).map(word => word.toLowerCase().replace(/[^\w]/g, ''))
+        words: words.map(word => word.toLowerCase().replace(/[^\w]/g, ''))
       });
     }
   }
@@ -381,7 +391,7 @@ async function cleanOldCache() {
   }
 }
 
-// Enhanced system prompt function with improved timestamp instructions
+// Enhanced system prompt function with improved lie detection criteria
 function buildSystemPrompt(sensitivity) {
   const baseSensitivity = {
     conservative: {
@@ -436,20 +446,23 @@ WHAT NOT TO FLAG:
 - Religious, philosophical, or ideological beliefs
 - Jokes, satire, or clearly entertainment content
 
-CRITICAL TIMESTAMP INSTRUCTIONS:
-⚠️ DO NOT GENERATE OR CALCULATE TIMESTAMPS - ONLY USE EXACT QUOTES ⚠️
-
-When you identify a lie:
-1. Quote the EXACT text of the false statement as it appears in the transcript
-2. Do NOT provide timestamp, timeInSeconds, or duration fields
-3. The system will automatically map your quoted text to the correct timestamp from the original transcript
-4. Focus on accuracy of the quoted claim text - timestamps will be handled automatically
+TIMESTAMP PRECISION REQUIREMENTS:
+- Analyze the complete 20-minute transcript with precise word-level mapping
+- When identifying a lie, find the EXACT moment the false statement begins
+- Use the provided word-to-timestamp mapping for surgical precision
+- Provide timestamps in MM:SS format (e.g., "7:23")
+- Include timeInSeconds as total seconds from video start
+- Estimate duration based on how long the false claim is elaborated upon
+- Default duration: 8-15 seconds for simple claims, 15-30 seconds for complex lies
 
 RESPONSE FORMAT (JSON ONLY):
 {
   "claims": [
     {
-      "claim": "EXACT quote of the false statement as it appears in transcript",
+      "timestamp": "MM:SS format when lie STARTS",
+      "timeInSeconds": total_seconds_from_start,
+      "duration": estimated_duration_in_seconds,
+      "claim": "Exact quote of the false statement",
       "explanation": "Concise fact-check (max 2 sentences)",
       "confidence": confidence_score_0.75_to_1.0,
       "severity": "critical",
@@ -458,101 +471,109 @@ RESPONSE FORMAT (JSON ONLY):
   ]
 }
 
-IMPORTANT: 
-- Do NOT include timestamp, timeInSeconds, or duration fields
-- Only include the exact quoted text in the "claim" field
-- The system will automatically find the precise timestamp from the original transcript
-- Focus on identifying false statements with exact quotes
-
 QUALITY ASSURANCE:
 - Double-check each flagged claim against established facts
-- Ensure quoted text exactly matches what appears in the transcript
+- Ensure timestamps correspond to when the lie actually begins
 - Verify confidence scores match the evidence strength
 - Confirm each claim meets the ${config.threshold} threshold
 - If uncertain, DO NOT flag - false positives harm credibility
 
-Remember: Your role is to protect people from harmful misinformation while respecting legitimate discourse. Be precise with quotes, be confident in your fact-checking, and let the system handle timestamp mapping.`;
+Remember: Your role is to protect people from harmful misinformation while respecting legitimate discourse. Be precise, be confident, and be helpful.`;
 }
 
-// Enhanced function to find precise timestamp using original transcript data
-function findClaimTimestampFromOriginal(claim, transcriptData) {
-  console.log(`🔍 Finding original transcript timestamp for claim: "${claim}"`);
+// Enhanced function to find precise timestamp for a claim using word-level mapping
+function findClaimTimestamp(claim, transcriptData) {
+  console.log(`🔍 Finding precise timestamp for claim: "${claim}"`);
   
-  // Clean and normalize the claim text for better matching
+  // Clean and normalize the claim text
   const normalizedClaim = claim.toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   
-  // Try different matching strategies
-  const strategies = [
-    // Strategy 1: Exact phrase match
-    (segment) => {
-      const segmentText = segment.text.toLowerCase();
-      return segmentText.includes(normalizedClaim) ? 100 : 0;
-    },
-    
-    // Strategy 2: Partial phrase match (50+ characters)
-    (segment) => {
-      if (normalizedClaim.length < 50) return 0;
-      const segmentText = segment.text.toLowerCase();
-      const partialClaim = normalizedClaim.substring(0, 50);
-      return segmentText.includes(partialClaim) ? 80 : 0;
-    },
-    
-    // Strategy 3: Word sequence match (5+ consecutive words)
-    (segment) => {
-      const claimWords = normalizedClaim.split(/\s+/);
-      if (claimWords.length < 5) return 0;
-      
-      const segmentText = segment.text.toLowerCase();
-      for (let i = 0; i <= claimWords.length - 5; i++) {
-        const wordSequence = claimWords.slice(i, i + 5).join(' ');
-        if (segmentText.includes(wordSequence)) {
-          return 60;
-        }
-      }
-      return 0;
-    },
-    
-    // Strategy 4: Key word density match
-    (segment) => {
-      const claimWords = normalizedClaim.split(/\s+/).filter(w => w.length > 3);
-      const segmentText = segment.text.toLowerCase();
-      
-      let matches = 0;
-      for (const word of claimWords) {
-        if (segmentText.includes(word)) {
-          matches++;
-        }
-      }
-      
-      const density = matches / claimWords.length;
-      return density > 0.6 ? density * 40 : 0;
-    }
-  ];
+  // Extract key phrases (3+ word sequences) and individual words
+  const claimWords = normalizedClaim.split(/\s+/).filter(word => word.length > 2);
+  const claimPhrases = [];
   
-  let bestMatch = null;
+  // Generate 3-word phrases for better matching
+  for (let i = 0; i <= claimWords.length - 3; i++) {
+    claimPhrases.push(claimWords.slice(i, i + 3).join(' '));
+  }
+  
+  console.log(`🔍 Key phrases: ${claimPhrases.join(', ')}`);
+  console.log(`🔍 Key words: ${claimWords.join(', ')}`);
+  
+  let bestMatch = transcriptData.startTime;
   let bestScore = 0;
+  let bestSegment = null;
   
-  // Try each strategy on all segments
+  // First, try to find phrase matches (more accurate)
   for (const segment of transcriptData.segmentTimestamps) {
-    for (const strategy of strategies) {
-      const score = strategy(segment);
-      if (score > bestScore) {
-        bestScore = score;
-        bestMatch = segment;
+    const segmentText = segment.text.toLowerCase();
+    let score = 0;
+    
+    // Check for phrase matches (higher weight)
+    for (const phrase of claimPhrases) {
+      if (segmentText.includes(phrase)) {
+        score += 10; // High score for phrase matches
+        console.log(`🎯 Found phrase "${phrase}" in segment at ${segment.timestamp}s`);
       }
+    }
+    
+    // Check for individual word matches
+    for (const word of claimWords) {
+      const wordRegex = new RegExp(`\\b${word}\\b`, 'i');
+      if (wordRegex.test(segmentText)) {
+        score += 2; // Lower score for individual words
+      }
+    }
+    
+    // Bonus for higher word density
+    if (score > 0) {
+      const matchRatio = score / (claimWords.length * 2);
+      score = score * (1 + matchRatio);
+    }
+    
+    console.log(`🔍 Segment "${segment.text.substring(0, 50)}..." at ${segment.timestamp}s: score ${score}`);
+    
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = segment.timestamp;
+      bestSegment = segment;
     }
   }
   
-  if (bestMatch && bestScore >= 40) {
-    console.log(`🎯 Found match with score ${bestScore}: "${bestMatch.text.substring(0, 100)}..." at ${bestMatch.timestamp}s`);
-    return bestMatch.timestamp;
+  // If we found a good match, try to get more precise timing within the segment
+  if (bestScore > 5 && bestSegment) {
+    console.log(`🎯 Best match in segment: "${bestSegment.text}" at ${bestMatch}s (score: ${bestScore})`);
+    
+    // Try to find the exact position within the segment
+    const segmentText = bestSegment.text.toLowerCase();
+    let earliestMatch = bestMatch;
+    
+    for (const phrase of claimPhrases) {
+      const phraseIndex = segmentText.indexOf(phrase);
+      if (phraseIndex !== -1) {
+        // Estimate timestamp within segment based on character position
+        const segmentDuration = 5; // Assume average 5 seconds per segment
+        const relativePosition = phraseIndex / segmentText.length;
+        const estimatedOffset = relativePosition * segmentDuration;
+        const preciseTimestamp = bestMatch + estimatedOffset;
+        
+        if (preciseTimestamp < earliestMatch || earliestMatch === bestMatch) {
+          earliestMatch = preciseTimestamp;
+        }
+        
+        console.log(`🎯 Found phrase "${phrase}" at position ${phraseIndex}, estimated timestamp: ${preciseTimestamp}s`);
+      }
+    }
+    
+    bestMatch = earliestMatch;
   } else {
-    console.log(`⚠️ No good match found (best score: ${bestScore}), using transcript start`);
-    return transcriptData.startTime;
+    console.log(`⚠️ No good match found (score: ${bestScore}), using transcript start: ${bestMatch}s`);
   }
+  
+  return Math.round(bestMatch);
 }
 
 // Function to analyze lies in full transcript with enhanced processing
@@ -607,13 +628,12 @@ ${transcriptData.text}
 ANALYSIS INSTRUCTIONS:
 1. Read the entire transcript carefully
 2. Identify any factually incorrect statements that meet the ${sensitivity} threshold
-3. For each lie found, quote the EXACT text as it appears in the transcript
-4. Do NOT provide timestamps - the system will map your quotes to precise timestamps
-5. Focus on harmful misinformation that could mislead viewers
-6. Ignore opinions, predictions, and subjective statements
-7. Return results in the specified JSON format only
+3. For each lie found, provide the exact timestamp when it begins
+4. Focus on harmful misinformation that could mislead viewers
+5. Ignore opinions, predictions, and subjective statements
+6. Return results in the specified JSON format only
 
-Remember: Only flag claims you are highly confident are factually incorrect with strong evidence. Quote the exact text - timestamps will be handled automatically.`;
+Remember: Only flag claims you are highly confident are factually incorrect with strong evidence.`;
     
     // Send progress update
     chrome.runtime.sendMessage({
@@ -672,7 +692,7 @@ Remember: Only flag claims you are highly confident are factually incorrect with
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'processing_response',
-      message: 'Processing AI response and mapping to original timestamps...'
+      message: 'Processing AI response and mapping timestamps...'
     });
 
     const data = await response.json();
@@ -693,45 +713,51 @@ Remember: Only flag claims you are highly confident are factually incorrect with
       if (jsonMatch) {
         const parsedResult = JSON.parse(jsonMatch[0]);
         
-        // Enhanced post-processing using original transcript timestamps
+        // Enhanced post-processing for accurate timestamps
         if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
-          console.log(`🔍 Processing ${parsedResult.claims.length} detected lies for original timestamp mapping`);
+          console.log(`🔍 Processing ${parsedResult.claims.length} detected lies for timestamp accuracy`);
           
           parsedResult.claims = parsedResult.claims.map((claim, index) => {
+            let finalTimeInSeconds;
+            let finalTimestamp;
+            let finalDuration = claim.duration || 12; // Default 12 seconds
+            
             console.log(`\n🎯 Processing lie ${index + 1}: "${claim.claim}"`);
             
-            // Find the timestamp from the original transcript using the exact claim text
-            const originalTimestamp = findClaimTimestampFromOriginal(claim.claim, transcriptData);
-            
-            // Convert to MM:SS format
-            const minutes = Math.floor(originalTimestamp / 60);
-            const seconds = originalTimestamp % 60;
-            const formattedTimestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-            
-            // Estimate duration based on claim length (8-25 seconds)
-            const claimLength = claim.claim.length;
-            let estimatedDuration;
-            if (claimLength < 100) {
-              estimatedDuration = 8;
-            } else if (claimLength < 200) {
-              estimatedDuration = 12;
-            } else if (claimLength < 300) {
-              estimatedDuration = 18;
+            // Enhanced timestamp finding with multiple strategies
+            if (claim.timeInSeconds && claim.timeInSeconds >= transcriptData.startTime && claim.timeInSeconds <= transcriptData.endTime) {
+              // AI provided a valid timestamp within bounds
+              finalTimeInSeconds = Math.round(claim.timeInSeconds);
+              console.log(`✅ Using AI timestamp: ${finalTimeInSeconds}s (within bounds)`);
             } else {
-              estimatedDuration = 25;
+              // Find the best timestamp using enhanced matching
+              console.log(`🔍 AI timestamp invalid or missing, finding precise match...`);
+              finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData);
             }
             
+            // Ensure timestamp is within bounds
+            finalTimeInSeconds = Math.max(transcriptData.startTime, Math.min(finalTimeInSeconds, transcriptData.endTime));
+            
+            // Convert to MM:SS format
+            const minutes = Math.floor(finalTimeInSeconds / 60);
+            const seconds = finalTimeInSeconds % 60;
+            finalTimestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            
+            // Validate and adjust duration
+            if (finalDuration < 5) finalDuration = 8; // Minimum 8 seconds
+            if (finalDuration > 45) finalDuration = 30; // Maximum 30 seconds
+            
             console.log(`🎯 Final lie ${index + 1} details:`);
-            console.log(`   - Original Timestamp: ${formattedTimestamp} (${originalTimestamp}s)`);
-            console.log(`   - Estimated Duration: ${estimatedDuration}s`);
+            console.log(`   - Timestamp: ${finalTimestamp} (${finalTimeInSeconds}s)`);
+            console.log(`   - Duration: ${finalDuration}s`);
             console.log(`   - Confidence: ${Math.round((claim.confidence || 0.8) * 100)}%`);
             console.log(`   - Claim: "${claim.claim.substring(0, 100)}..."`);
             
             return {
               ...claim,
-              timestamp: formattedTimestamp,
-              timeInSeconds: Math.round(originalTimestamp),
-              duration: estimatedDuration,
+              timestamp: finalTimestamp,
+              timeInSeconds: finalTimeInSeconds,
+              duration: finalDuration,
               severity: 'critical',
               confidence: Math.max(0.75, claim.confidence || 0.8), // Ensure minimum confidence
               category: claim.category || 'other'
@@ -869,7 +895,7 @@ async function processVideo() {
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'transcript_preparation',
-      message: 'Preparing transcript with original timestamp mapping...'
+      message: 'Preparing transcript with precise timestamp mapping...'
     });
 
     // Prepare full transcript for analysis with enhanced timestamp mapping
@@ -903,7 +929,7 @@ async function processVideo() {
         severity: 'critical' // Ensure all detected lies are marked as critical
       }));
       
-      console.log(`✅ Analysis complete: Found ${allLies.length} lies with original transcript timestamps`);
+      console.log(`✅ Analysis complete: Found ${allLies.length} lies with enhanced timestamp precision`);
     } else {
       console.log('✅ Analysis complete: No lies detected in this video');
     }
@@ -919,7 +945,7 @@ async function processVideo() {
     // Prepare final analysis with enhanced reporting
     let finalAnalysis;
     if (allLies.length === 0) {
-      finalAnalysis = `✅ Enhanced lie detection complete!\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with original timestamp precision.\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our enhanced detection criteria.`;
+      finalAnalysis = `✅ Enhanced lie detection complete!\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our enhanced detection criteria.`;
     } else {
       // Sort lies by timestamp for final display
       allLies.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
@@ -940,7 +966,7 @@ async function processVideo() {
       const avgConfidence = Math.round(allLies.reduce((sum, c) => sum + c.confidence, 0) / allLies.length * 100);
       const categories = [...new Set(allLies.map(c => c.category))];
       
-      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with original timestamp precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nCategories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains high-confidence false information that could be harmful if believed.\n\n${liesText}`;
+      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nCategories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains high-confidence false information that could be harmful if believed.\n\n${liesText}`;
     }
 
     // Save final analysis to cache
