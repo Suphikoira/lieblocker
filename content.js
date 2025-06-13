@@ -404,10 +404,19 @@ TIMESTAMP INSTRUCTIONS:
 - Be precise - match the exact wording from the transcript
 - Timestamps should be in MM:SS format (e.g., "2:34")
 
+DURATION ESTIMATION:
+- Estimate how long each lie takes to be fully stated
+- Consider the complexity and length of the false claim
+- Simple false statements: 5-10 seconds
+- Complex lies with elaboration: 10-20 seconds
+- Extended false narratives: 15-30 seconds
+- Maximum duration: 30 seconds
+
 RESPONSE FORMAT:
 Respond with a JSON object containing an array of claims. Each claim should have:
 - "timestamp": The exact timestamp from the transcript (e.g., "2:34")
 - "timeInSeconds": Timestamp converted to seconds (e.g., 154)
+- "duration": Estimated duration of the lie in seconds (5-30)
 - "claim": The specific false or misleading statement (exact quote from transcript)
 - "explanation": Why this claim is problematic (1-2 sentences)
 - "confidence": Your confidence level (0.0-1.0)
@@ -420,6 +429,7 @@ Example response:
     {
       "timestamp": "1:23",
       "timeInSeconds": 83,
+      "duration": 12,
       "claim": "Vaccines contain microchips",
       "explanation": "This is a debunked conspiracy theory with no scientific evidence.",
       "confidence": 0.95,
@@ -618,14 +628,14 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
       if (jsonMatch) {
         const parsedResult = JSON.parse(jsonMatch[0]);
         
-        // Enhanced post-processing for accurate timestamps
+        // Enhanced post-processing for accurate timestamps and durations
         if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
           console.log(`🔍 Processing ${parsedResult.claims.length} detected lies for timestamp accuracy`);
           
           parsedResult.claims = parsedResult.claims.map((claim, index) => {
             let finalTimeInSeconds;
             let finalTimestamp;
-            let finalDuration = claim.duration || 10; // Default 10 seconds
+            let finalDuration = claim.duration || 12; // Default 12 seconds
             
             console.log(`\n🎯 Processing lie ${index + 1}: "${claim.claim}"`);
             
@@ -658,9 +668,33 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
             finalTimeInSeconds = Math.max(transcriptData.startTime, Math.min(finalTimeInSeconds, transcriptData.endTime));
             finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
             
-            // Validate and adjust duration
-            if (finalDuration < 5) finalDuration = 8; // Minimum 8 seconds
-            if (finalDuration > 45) finalDuration = 30; // Maximum 30 seconds
+            // Enhanced duration estimation based on claim complexity
+            if (claim.duration && claim.duration >= 5 && claim.duration <= 30) {
+              // Use AI-provided duration if it's reasonable
+              finalDuration = Math.round(claim.duration);
+            } else {
+              // Estimate duration based on claim length and complexity
+              const claimLength = claim.claim.length;
+              const wordCount = claim.claim.split(/\s+/).length;
+              
+              if (claimLength < 50 || wordCount < 8) {
+                finalDuration = 8; // Short, simple claims
+              } else if (claimLength < 100 || wordCount < 15) {
+                finalDuration = 12; // Medium claims
+              } else if (claimLength < 200 || wordCount < 25) {
+                finalDuration = 18; // Longer claims
+              } else {
+                finalDuration = 25; // Complex, extended claims
+              }
+              
+              // Add extra time for high severity lies (usually more elaborated)
+              if (claim.severity === 'high') {
+                finalDuration += 5;
+              }
+              
+              // Ensure bounds
+              finalDuration = Math.max(5, Math.min(finalDuration, 30));
+            }
             
             // Ensure minimum confidence based on sensitivity
             const minConfidence = {
@@ -676,10 +710,11 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
             
             console.log(`🎯 Final lie ${index + 1} details:`);
             console.log(`   - Timestamp: ${finalTimestamp} (${finalTimeInSeconds}s)`);
-            console.log(`   - Duration: ${finalDuration}s`);
+            console.log(`   - Duration: ${finalDuration}s (estimated from claim complexity)`);
             console.log(`   - Confidence: ${Math.round(adjustedConfidence * 100)}%`);
             console.log(`   - Severity: ${claim.severity || 'medium'}`);
             console.log(`   - Category: ${claim.category || 'other'}`);
+            console.log(`   - Claim length: ${claim.claim.length} chars, ${claim.claim.split(/\s+/).length} words`);
             console.log(`   - Claim: "${claim.claim.substring(0, 100)}..."`);
             
             return {
