@@ -25,9 +25,6 @@ async function getTranscript() {
     console.log('✅ Transcript received from background script');
     console.log(`✅ Successfully extracted ${response.data.length} transcript segments`);
     
-    // Export transcript to console for debugging and feedback
-    exportTranscriptToConsole(response.data, videoId);
-    
     // Return the transcript segments directly since they already have timestamps
     return response.data;
 
@@ -43,111 +40,6 @@ async function getTranscript() {
     }
     return null;
   }
-}
-
-// Function to export transcript to console for debugging and feedback
-function exportTranscriptToConsole(transcript, videoId) {
-  console.log('\n🎯 ===== TRANSCRIPT EXPORT FOR DEBUGGING =====');
-  console.log(`📹 Video ID: ${videoId}`);
-  console.log(`📊 Total Segments: ${transcript.length}`);
-  console.log('📝 Use this data to verify timestamps and provide feedback\n');
-  
-  // Create a formatted transcript object for easy inspection
-  const formattedTranscript = transcript.map((segment, index) => {
-    const minutes = Math.floor(segment.start / 60);
-    const seconds = Math.floor(segment.start % 60);
-    const timestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-    
-    return {
-      index: index + 1,
-      timestamp: timestamp,
-      timeInSeconds: Math.round(segment.start),
-      duration: segment.duration ? Math.round(segment.duration) : 'unknown',
-      text: segment.text.trim(),
-      // Helper for finding specific content
-      words: segment.text.toLowerCase().split(/\s+/).filter(w => w.length > 2)
-    };
-  });
-  
-  // Export to global window object for easy access
-  window.LieBlockerTranscript = {
-    videoId: videoId,
-    segments: formattedTranscript,
-    totalSegments: transcript.length,
-    
-    // Helper functions for debugging
-    findByText: function(searchText) {
-      const search = searchText.toLowerCase();
-      return this.segments.filter(segment => 
-        segment.text.toLowerCase().includes(search)
-      );
-    },
-    
-    findByTimestamp: function(timestamp) {
-      if (typeof timestamp === 'string') {
-        const parts = timestamp.split(':');
-        const seconds = parseInt(parts[0]) * 60 + parseInt(parts[1]);
-        return this.segments.find(segment => 
-          Math.abs(segment.timeInSeconds - seconds) <= 2
-        );
-      }
-      return this.segments.find(segment => 
-        Math.abs(segment.timeInSeconds - timestamp) <= 2
-      );
-    },
-    
-    getSegmentRange: function(startTime, endTime) {
-      return this.segments.filter(segment => 
-        segment.timeInSeconds >= startTime && segment.timeInSeconds <= endTime
-      );
-    },
-    
-    exportCSV: function() {
-      const csv = [
-        'Index,Timestamp,TimeInSeconds,Duration,Text',
-        ...this.segments.map(s => 
-          `${s.index},"${s.timestamp}",${s.timeInSeconds},${s.duration},"${s.text.replace(/"/g, '""')}"`
-        )
-      ].join('\n');
-      
-      console.log('📄 CSV Export:\n', csv);
-      return csv;
-    },
-    
-    exportJSON: function() {
-      const json = JSON.stringify(this.segments, null, 2);
-      console.log('📄 JSON Export:\n', json);
-      return json;
-    }
-  };
-  
-  // Log the transcript in a readable format
-  console.log('📋 TRANSCRIPT SEGMENTS:');
-  console.log('Format: [Index] Timestamp (TimeInSeconds) - Text');
-  console.log('─'.repeat(80));
-  
-  formattedTranscript.slice(0, 10).forEach(segment => {
-    console.log(`[${segment.index.toString().padStart(3, ' ')}] ${segment.timestamp} (${segment.timeInSeconds}s) - ${segment.text.substring(0, 100)}${segment.text.length > 100 ? '...' : ''}`);
-  });
-  
-  if (formattedTranscript.length > 10) {
-    console.log(`... and ${formattedTranscript.length - 10} more segments`);
-  }
-  
-  console.log('─'.repeat(80));
-  console.log('\n🔧 DEBUGGING COMMANDS:');
-  console.log('• Access full transcript: window.LieBlockerTranscript');
-  console.log('• Find text: window.LieBlockerTranscript.findByText("search term")');
-  console.log('• Find by time: window.LieBlockerTranscript.findByTimestamp("5:30")');
-  console.log('• Get range: window.LieBlockerTranscript.getSegmentRange(300, 600)');
-  console.log('• Export CSV: window.LieBlockerTranscript.exportCSV()');
-  console.log('• Export JSON: window.LieBlockerTranscript.exportJSON()');
-  console.log('\n📝 FEEDBACK INSTRUCTIONS:');
-  console.log('1. Find the lie in the transcript using the search functions');
-  console.log('2. Note the exact timestamp where the lie begins');
-  console.log('3. Compare with the detected timestamp in the extension');
-  console.log('4. Report discrepancies for timestamp accuracy improvements');
-  console.log('\n🎯 ============================================\n');
 }
 
 // Function to prepare full transcript for analysis (limited to 20 minutes)
@@ -173,10 +65,6 @@ function prepareFullTranscript(transcript) {
   
   console.log(`📊 Preparing full transcript analysis for ${DEMO_LIMIT_MINUTES} minutes`);
   console.log(`📊 Processing ${filteredTranscript.length} transcript segments`);
-  
-  // Export the filtered transcript for analysis debugging
-  console.log('\n🎯 ===== ANALYSIS TRANSCRIPT (20 MIN LIMIT) =====');
-  console.log(`📊 Filtered to ${filteredTranscript.length} segments (first 20 minutes)`);
   
   // Build the full text with precise timestamp mapping
   let fullText = '';
@@ -226,56 +114,6 @@ function prepareFullTranscript(transcript) {
   const endTime = Math.min(filteredTranscript[filteredTranscript.length - 1].start, limitedDuration);
   const endMinutes = Math.floor(endTime / 60);
   const endSeconds = Math.floor(endTime % 60);
-  
-  // Export analysis transcript to console
-  window.LieBlockerAnalysisTranscript = {
-    fullText: fullText,
-    segmentTimestamps: segmentTimestamps,
-    wordToTimestampMap: wordToTimestampMap,
-    timeWindow: `0:00 - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`,
-    
-    // Helper function to find text position and corresponding timestamp
-    findTextPosition: function(searchText) {
-      const position = this.fullText.toLowerCase().indexOf(searchText.toLowerCase());
-      if (position === -1) return null;
-      
-      const timestamp = this.wordToTimestampMap.get(position);
-      const minutes = Math.floor(timestamp / 60);
-      const seconds = Math.floor(timestamp % 60);
-      
-      return {
-        position: position,
-        timestamp: timestamp,
-        formattedTime: `${minutes}:${seconds.toString().padStart(2, '0')}`,
-        context: this.fullText.substring(Math.max(0, position - 50), position + 100)
-      };
-    },
-    
-    // Helper to validate detected lie timestamps
-    validateLieTimestamp: function(claim, detectedTimestamp) {
-      const textPosition = this.findTextPosition(claim);
-      if (!textPosition) {
-        console.log(`❌ Could not find claim "${claim}" in transcript`);
-        return false;
-      }
-      
-      const timeDiff = Math.abs(textPosition.timestamp - detectedTimestamp);
-      console.log(`🔍 Timestamp Validation:`);
-      console.log(`   Claim: "${claim}"`);
-      console.log(`   Expected: ${textPosition.formattedTime} (${textPosition.timestamp}s)`);
-      console.log(`   Detected: ${Math.floor(detectedTimestamp / 60)}:${(detectedTimestamp % 60).toString().padStart(2, '0')} (${detectedTimestamp}s)`);
-      console.log(`   Difference: ${timeDiff.toFixed(1)}s`);
-      console.log(`   Context: "${textPosition.context}"`);
-      
-      return timeDiff <= 10; // Allow 10 second tolerance
-    }
-  };
-  
-  console.log('📝 Full analysis text length:', fullText.length, 'characters');
-  console.log('🔧 Access analysis transcript: window.LieBlockerAnalysisTranscript');
-  console.log('🔧 Find text position: window.LieBlockerAnalysisTranscript.findTextPosition("search text")');
-  console.log('🔧 Validate timestamp: window.LieBlockerAnalysisTranscript.validateLieTimestamp("claim", timestampInSeconds)');
-  console.log('🎯 ===============================================\n');
   
   return {
     text: fullText.trim(),
@@ -335,25 +173,6 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     
     console.log('💾 Analysis saved to cache for video:', videoId);
     console.log('💾 Total lies saved:', cacheData.claims.length);
-    
-    // Export detected lies for debugging
-    if (lies.length > 0) {
-      console.log('\n🚨 ===== DETECTED LIES FOR VALIDATION =====');
-      lies.forEach((lie, index) => {
-        console.log(`\n🚨 Lie ${index + 1}:`);
-        console.log(`   Timestamp: ${lie.timestamp} (${lie.timeInSeconds}s)`);
-        console.log(`   Duration: ${lie.duration}s`);
-        console.log(`   Claim: "${lie.claim}"`);
-        console.log(`   Confidence: ${Math.round(lie.confidence * 100)}%`);
-        console.log(`   Category: ${lie.category}`);
-        
-        // Validate timestamp if analysis transcript is available
-        if (window.LieBlockerAnalysisTranscript) {
-          window.LieBlockerAnalysisTranscript.validateLieTimestamp(lie.claim, lie.timeInSeconds);
-        }
-      });
-      console.log('\n🎯 ========================================\n');
-    }
     
     // Notify popup of cache update
     chrome.runtime.sendMessage({
