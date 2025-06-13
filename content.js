@@ -210,94 +210,69 @@ async function cleanOldCache() {
   }
 }
 
-// Enhanced system prompt function with improved lie detection criteria
+// Simplified system prompt function with improved lie detection criteria
 function buildSystemPrompt(sensitivity) {
   const baseSensitivity = {
     conservative: {
-      threshold: 'extremely high confidence (95%+)',
-      focus: 'only the most egregious and demonstrably false claims with overwhelming evidence',
-      description: 'Be extremely selective and only flag claims that are demonstrably false with overwhelming evidence and pose significant harm potential',
-      examples: 'medical misinformation that could cause harm, completely fabricated historical events, dangerous conspiracy theories with no factual basis'
+      threshold: 'very high confidence (90%+)',
+      focus: 'only clear, verifiable false claims with strong evidence'
     },
     balanced: {
-      threshold: 'very high confidence (85%+)',
-      focus: 'clearly false claims with strong evidence and significant impact',
-      description: 'Flag claims that are clearly false with strong evidence and have potential for significant misinformation impact',
-      examples: 'false scientific claims, incorrect financial advice, misleading health information, fabricated news events'
+      threshold: 'high confidence (80%+)',
+      focus: 'false or misleading claims with good evidence'
     },
     aggressive: {
-      threshold: 'high confidence (75%+)',
-      focus: 'false or highly misleading claims with substantial evidence',
-      description: 'Flag claims that are false or highly misleading with substantial evidence against them',
-      examples: 'misleading statistics, exaggerated claims, selective presentation of facts, unsubstantiated assertions'
+      threshold: 'moderate confidence (70%+)',
+      focus: 'false, misleading, or questionable claims'
     }
   };
 
   const config = baseSensitivity[sensitivity] || baseSensitivity.balanced;
 
-  return `You are an expert fact-checker and misinformation detection specialist. Your mission is to identify ${config.focus} with ${config.threshold}.
+  return `You are a fact-checking expert. Analyze this 20-minute YouTube transcript and identify false or misleading claims.
 
-CORE MISSION: ${config.description}
+DETECTION CRITERIA:
+- Only flag factual claims, not opinions or predictions
+- Require ${config.threshold} before flagging
+- Focus on ${config.focus}
+- Be specific about what makes each claim problematic
+- Consider context and intent
+- Err on the side of caution to avoid false positives
 
-DETECTION CRITERIA (STRICT):
-1. FACTUAL ACCURACY: Only flag claims that are objectively, verifiably false
-2. EVIDENCE REQUIREMENT: Must have strong, credible evidence contradicting the claim
-3. HARM POTENTIAL: Prioritize claims that could cause significant harm if believed
-4. CONFIDENCE THRESHOLD: Require ${config.threshold} before flagging anything
-5. CONTEXT AWARENESS: Consider speaker intent, audience, and presentation context
+PRIORITY AREAS:
+- Health & Medical misinformation
+- Science & Technology false claims
+- Financial scams or misleading advice
+- Political misinformation
+- Conspiracy theories without evidence
+- Safety-related false information
 
-PRIORITY CATEGORIES:
-- Health & Medical: False treatments, dangerous remedies, vaccine misinformation
-- Science & Technology: Debunked theories, impossible claims, fabricated research
-- Financial: Investment scams, false economic data, misleading financial advice
-- Politics & Current Events: Fabricated news, false statistics, conspiracy theories
-- Safety & Security: Dangerous instructions, false emergency information
+RESPONSE FORMAT:
+Respond with a JSON object containing an array of claims. Each claim should have:
+- "timestamp": The exact timestamp from the transcript (e.g., "2:34")
+- "timeInSeconds": Timestamp converted to seconds (e.g., 154)
+- "claim": The specific false or misleading statement
+- "explanation": Why this claim is problematic (1-2 sentences)
+- "confidence": Your confidence level (0.0-1.0)
+- "severity": "low", "medium", or "high"
+- "category": Type of misinformation (e.g., "health", "science", "politics", "conspiracy")
 
-EXAMPLES OF FLAGGABLE CONTENT (${sensitivity} threshold):
-${config.examples}
-
-WHAT NOT TO FLAG:
-- Opinions, personal beliefs, or subjective statements
-- Predictions about future events (unless claiming certainty about unknowable futures)
-- Hyperbole, metaphors, or obvious exaggerations for effect
-- Disputed topics where experts disagree
-- Statements that are technically true but misleading (unless extremely harmful)
-- Religious, philosophical, or ideological beliefs
-- Jokes, satire, or clearly entertainment content
-
-TIMESTAMP PRECISION REQUIREMENTS:
-- Analyze the complete 20-minute transcript with precise word-level mapping
-- When identifying a lie, find the EXACT moment the false statement begins
-- Use the provided word-to-timestamp mapping for surgical precision
-- Provide timestamps in MM:SS format (e.g., "7:23")
-- Include timeInSeconds as total seconds from video start
-- Estimate duration based on how long the false claim is elaborated upon
-- Default duration: 8-15 seconds for simple claims, 15-30 seconds for complex lies
-
-RESPONSE FORMAT (JSON ONLY):
+Example response:
 {
   "claims": [
     {
-      "timestamp": "MM:SS format when lie STARTS",
-      "timeInSeconds": total_seconds_from_start,
-      "duration": estimated_duration_in_seconds,
-      "claim": "Exact quote of the false statement",
-      "explanation": "Concise fact-check (max 2 sentences)",
-      "confidence": confidence_score_0.75_to_1.0,
-      "severity": "critical",
-      "category": "health|science|financial|political|safety|other"
+      "timestamp": "1:23",
+      "timeInSeconds": 83,
+      "claim": "Vaccines contain microchips",
+      "explanation": "This is a debunked conspiracy theory with no scientific evidence.",
+      "confidence": 0.95,
+      "severity": "high",
+      "category": "health"
     }
   ]
 }
 
-QUALITY ASSURANCE:
-- Double-check each flagged claim against established facts
-- Ensure timestamps correspond to when the lie actually begins
-- Verify confidence scores match the evidence strength
-- Confirm each claim meets the ${config.threshold} threshold
-- If uncertain, DO NOT flag - false positives harm credibility
-
-Remember: Your role is to protect people from harmful misinformation while respecting legitimate discourse. Be precise, be confident, and be helpful.`;
+IMPORTANT: Only return the JSON object. Do not include any other text.`;
 }
 
 // Enhanced function to find precise timestamp for a claim using word-level mapping
@@ -395,7 +370,7 @@ function findClaimTimestamp(claim, transcriptData) {
   return Math.round(bestMatch);
 }
 
-// Function to analyze lies in full transcript with enhanced processing
+// Function to analyze lies in full transcript with simplified processing
 async function analyzeLies(transcriptData, sensitivity = 'balanced') {
   try {
     // Send progress update
@@ -434,25 +409,12 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
     
     const systemPrompt = buildSystemPrompt(sensitivity);
     
-    // Enhanced user content with better structure for AI analysis
-    const userContent = `TRANSCRIPT ANALYSIS REQUEST
+    // Simplified user content focused on the transcript
+    const userContent = `TRANSCRIPT TO ANALYZE (${transcriptData.timeWindow}):
 
-Time Window: ${transcriptData.timeWindow}
-Total Segments: ${transcriptData.totalSegments}
-Content Type: YouTube Video Transcript
-
-TRANSCRIPT TEXT:
 ${transcriptData.text}
 
-ANALYSIS INSTRUCTIONS:
-1. Read the entire transcript carefully
-2. Identify any factually incorrect statements that meet the ${sensitivity} threshold
-3. For each lie found, provide the exact timestamp when it begins
-4. Focus on harmful misinformation that could mislead viewers
-5. Ignore opinions, predictions, and subjective statements
-6. Return results in the specified JSON format only
-
-Remember: Only flag claims you are highly confident are factually incorrect with strong evidence.`;
+Analyze this transcript and identify any false or misleading claims. Return only the JSON response as specified.`;
     
     // Send progress update
     chrome.runtime.sendMessage({
@@ -479,8 +441,8 @@ Remember: Only flag claims you are highly confident are factually incorrect with
             role: "user",
             content: userContent
           }],
-          temperature: 0.1, // Low temperature for more consistent, factual responses
-          max_tokens: 2000 // Sufficient for detailed analysis
+          temperature: 0.2, // Slightly higher for better detection
+          max_tokens: 2000
         })
       });
     } else if (provider === 'gemini') {
@@ -496,7 +458,7 @@ Remember: Only flag claims you are highly confident are factually incorrect with
             }]
           }],
           generationConfig: {
-            temperature: 0.1,
+            temperature: 0.2,
             maxOutputTokens: 2000
           }
         })
@@ -539,7 +501,7 @@ Remember: Only flag claims you are highly confident are factually incorrect with
           parsedResult.claims = parsedResult.claims.map((claim, index) => {
             let finalTimeInSeconds;
             let finalTimestamp;
-            let finalDuration = claim.duration || 12; // Default 12 seconds
+            let finalDuration = claim.duration || 10; // Default 10 seconds
             
             console.log(`\n🎯 Processing lie ${index + 1}: "${claim.claim}"`);
             
@@ -566,10 +528,24 @@ Remember: Only flag claims you are highly confident are factually incorrect with
             if (finalDuration < 5) finalDuration = 8; // Minimum 8 seconds
             if (finalDuration > 45) finalDuration = 30; // Maximum 30 seconds
             
+            // Ensure minimum confidence based on sensitivity
+            const minConfidence = {
+              conservative: 0.90,
+              balanced: 0.80,
+              aggressive: 0.70
+            };
+            
+            const adjustedConfidence = Math.max(
+              minConfidence[sensitivity] || 0.80,
+              claim.confidence || 0.80
+            );
+            
             console.log(`🎯 Final lie ${index + 1} details:`);
             console.log(`   - Timestamp: ${finalTimestamp} (${finalTimeInSeconds}s)`);
             console.log(`   - Duration: ${finalDuration}s`);
-            console.log(`   - Confidence: ${Math.round((claim.confidence || 0.8) * 100)}%`);
+            console.log(`   - Confidence: ${Math.round(adjustedConfidence * 100)}%`);
+            console.log(`   - Severity: ${claim.severity || 'medium'}`);
+            console.log(`   - Category: ${claim.category || 'other'}`);
             console.log(`   - Claim: "${claim.claim.substring(0, 100)}..."`);
             
             return {
@@ -577,8 +553,8 @@ Remember: Only flag claims you are highly confident are factually incorrect with
               timestamp: finalTimestamp,
               timeInSeconds: finalTimeInSeconds,
               duration: finalDuration,
-              severity: 'critical',
-              confidence: Math.max(0.75, claim.confidence || 0.8), // Ensure minimum confidence
+              confidence: adjustedConfidence,
+              severity: claim.severity || 'medium',
               category: claim.category || 'other'
             };
           });
@@ -625,7 +601,7 @@ async function updateSessionStats(newLies = []) {
     
     currentStats.videosAnalyzed += 1;
     currentStats.liesDetected += newLies.length;
-    currentStats.highSeverity += newLies.filter(c => c.severity === 'critical').length;
+    currentStats.highSeverity += newLies.filter(c => c.severity === 'high').length;
     currentStats.timeSaved += Math.floor(newLies.length * 0.5); // Estimate time saved
     
     await chrome.storage.local.set({ sessionStats: currentStats });
@@ -735,18 +711,15 @@ async function processVideo() {
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'analysis_start',
-      message: `Starting enhanced lie detection with ${sensitivity} threshold...`
+      message: `Starting lie detection with ${sensitivity} threshold...`
     });
 
-    // Analyze the full transcript for lies with enhanced processing
+    // Analyze the full transcript for lies with simplified processing
     const analysis = await analyzeLies(transcriptData, sensitivity);
     
     let allLies = [];
     if (analysis && analysis.claims && analysis.claims.length > 0) {
-      allLies = analysis.claims.map(claim => ({
-        ...claim,
-        severity: 'critical' // Ensure all detected lies are marked as critical
-      }));
+      allLies = analysis.claims;
       
       console.log(`✅ Analysis complete: Found ${allLies.length} lies with enhanced timestamp precision`);
     } else {
@@ -764,7 +737,7 @@ async function processVideo() {
     // Prepare final analysis with enhanced reporting
     let finalAnalysis;
     if (allLies.length === 0) {
-      finalAnalysis = `✅ Enhanced lie detection complete!\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our enhanced detection criteria.`;
+      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our detection criteria.`;
     } else {
       // Sort lies by timestamp for final display
       allLies.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
@@ -776,16 +749,24 @@ async function processVideo() {
           financial: '💰',
           political: '🏛️',
           safety: '⚠️',
+          conspiracy: '🕳️',
           other: '🚨'
         };
         
-        return `${index + 1}. ${categoryEmoji[claim.category] || '🚨'} ${claim.timestamp} (${claim.duration}s)\n🚫 Lie: ${claim.claim}\n🎯 Confidence: ${Math.round(claim.confidence * 100)}%\n💡 ${claim.explanation}`;
+        const severityEmoji = {
+          low: '🟡',
+          medium: '🟠',
+          high: '🔴'
+        };
+        
+        return `${index + 1}. ${categoryEmoji[claim.category] || '🚨'} ${severityEmoji[claim.severity] || '🟠'} ${claim.timestamp} (${claim.duration}s)\n🚫 Lie: ${claim.claim}\n🎯 Confidence: ${Math.round(claim.confidence * 100)}%\n💡 ${claim.explanation}`;
       }).join('\n\n');
       
       const avgConfidence = Math.round(allLies.reduce((sum, c) => sum + c.confidence, 0) / allLies.length * 100);
       const categories = [...new Set(allLies.map(c => c.category))];
+      const highSeverity = allLies.filter(c => c.severity === 'high').length;
       
-      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nCategories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains high-confidence false information that could be harmful if believed.\n\n${liesText}`;
+      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity} | Categories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
     }
 
     // Save final analysis to cache
