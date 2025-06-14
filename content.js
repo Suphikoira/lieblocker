@@ -25,7 +25,7 @@ async function getTranscript() {
     try {
       chrome.runtime.sendMessage({
         type: 'analysisResult',
-        data: `Error: ${error.message}. Make sure the video has closed captions available.`
+        data: `Error: ${error.message}. Make sure the video has closed captions available and your API credentials are configured.`
       });
     } catch (msgError) {
       console.error('Error sending message:', msgError);
@@ -109,46 +109,6 @@ function formatSecondsToTimestamp(seconds) {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Function to check for existing analysis in Supabase backend
-async function getExistingAnalysis(videoId) {
-  try {
-    // Check if Supabase is enabled
-    const settings = await chrome.storage.sync.get(['useSupabaseBackend']);
-    if (!settings.useSupabaseBackend) {
-      return null;
-    }
-
-    chrome.runtime.sendMessage({
-      type: 'analysisProgress',
-      stage: 'backend_check',
-      message: 'Checking shared database for existing analysis...'
-    });
-
-    const response = await chrome.runtime.sendMessage({
-      type: 'getVideoLiesFromBackend',
-      videoId: videoId,
-      minConfidence: 0.85
-    });
-
-    if (response.success && response.data.hasAnalysis) {
-      console.log('📋 Found existing analysis in Supabase backend');
-      return {
-        analysis: `✅ Analysis loaded from shared database!\n\nFound ${response.data.totalLies} lies from community analysis.\nAnalysis version: ${response.data.analysis.version}\nCreated: ${new Date(response.data.analysis.createdAt).toLocaleDateString()}`,
-        claims: response.data.lies,
-        timestamp: Date.now(),
-        videoId: videoId,
-        version: response.data.analysis.version,
-        source: 'supabase'
-      };
-    }
-
-    return null;
-  } catch (error) {
-    console.error('Error checking Supabase backend:', error);
-    return null;
-  }
-}
-
 // Function to get cached analysis results (local cache)
 async function getCachedAnalysis(videoId) {
   try {
@@ -177,7 +137,7 @@ async function getCachedAnalysis(videoId) {
   }
 }
 
-// Function to save analysis results to cache and optionally to backend
+// Function to save analysis results to cache
 async function saveAnalysisToCache(videoId, analysisText, lies = []) {
   try {
     const cacheData = {
@@ -196,16 +156,6 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     
     console.log('💾 Analysis saved to local cache');
     
-    // Check if should submit to Supabase backend
-    const settings = await chrome.storage.sync.get(['useSupabaseBackend', 'autoSubmitToBackend']);
-    if (settings.useSupabaseBackend && settings.autoSubmitToBackend && lies.length > 0) {
-      try {
-        await submitAnalysisToBackend(videoId, lies);
-      } catch (error) {
-        console.error('Failed to submit to backend, but local analysis saved:', error);
-      }
-    }
-    
     storeDetectedLiesForDownload(lies, videoId);
     
     chrome.runtime.sendMessage({
@@ -216,66 +166,6 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     
   } catch (error) {
     console.error('Error saving analysis to cache:', error);
-  }
-}
-
-// Function to submit analysis to Supabase backend
-async function submitAnalysisToBackend(videoId, lies) {
-  try {
-    chrome.runtime.sendMessage({
-      type: 'analysisProgress',
-      stage: 'backend_submit',
-      message: 'Submitting analysis to shared database...'
-    });
-
-    // Get video metadata
-    const videoTitle = document.querySelector('h1.ytd-video-primary-info-renderer')?.textContent?.trim();
-    const channelName = document.querySelector('#text.ytd-channel-name')?.textContent?.trim();
-    
-    // Transform lies to backend format
-    const backendLies = lies.map(lie => ({
-      timestamp_seconds: lie.timeInSeconds,
-      duration_seconds: lie.duration,
-      claim_text: lie.claim,
-      explanation: lie.explanation,
-      confidence: lie.confidence,
-      severity: lie.severity,
-      category: lie.category || 'other'
-    }));
-
-    const settings = await chrome.storage.sync.get(['analysisDuration']);
-    const analysisDuration = settings.analysisDuration || 20;
-
-    const response = await chrome.runtime.sendMessage({
-      type: 'submitAnalysisToBackend',
-      data: {
-        videoId: videoId,
-        videoTitle: videoTitle,
-        channelName: channelName,
-        lies: backendLies,
-        analysisDuration: analysisDuration,
-        confidenceThreshold: 0.85
-      }
-    });
-
-    if (response.success) {
-      console.log('✅ Analysis submitted to Supabase backend');
-      chrome.runtime.sendMessage({
-        type: 'analysisProgress',
-        stage: 'backend_success',
-        message: 'Analysis shared with community database!'
-      });
-    } else {
-      throw new Error(response.error);
-    }
-
-  } catch (error) {
-    console.error('Error submitting to backend:', error);
-    chrome.runtime.sendMessage({
-      type: 'analysisProgress',
-      stage: 'backend_error',
-      message: `Failed to share with community: ${error.message}`
-    });
   }
 }
 
@@ -695,7 +585,7 @@ async function updateSessionStats(newLies = []) {
   }
 }
 
-// Main function to process video with Supabase integration
+// Main function to process video
 async function processVideo() {
   try {
     const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
@@ -714,37 +604,7 @@ async function processVideo() {
       videoId: videoId
     });
 
-    // First check Supabase backend for existing analysis
-    const backendAnalysis = await getExistingAnalysis(videoId);
-    if (backendAnalysis) {
-      chrome.runtime.sendMessage({
-        type: 'analysisProgress',
-        stage: 'backend_found',
-        message: 'Loading analysis from shared database...'
-      });
-      
-      if (backendAnalysis.claims && backendAnalysis.claims.length > 0) {
-        chrome.runtime.sendMessage({
-          type: 'liesUpdate',
-          claims: backendAnalysis.claims,
-          isComplete: true
-        });
-        
-        const settings = await chrome.storage.sync.get(['detectionMode']);
-        if (settings.detectionMode === 'skip') {
-          currentVideoLies = backendAnalysis.claims;
-          startSkipModeMonitoring();
-        }
-      }
-      
-      chrome.runtime.sendMessage({
-        type: 'analysisResult',
-        data: backendAnalysis.analysis
-      });
-      return;
-    }
-
-    // Check local cache if no backend analysis
+    // Check local cache first
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'cache_check',
@@ -791,7 +651,7 @@ async function processVideo() {
     if (!transcript) {
       chrome.runtime.sendMessage({
         type: 'analysisResult',
-        data: 'Could not extract transcript. Make sure the video has closed captions available.'
+        data: 'Could not extract transcript. Make sure the video has closed captions available and your API credentials are configured.'
       });
       return;
     }

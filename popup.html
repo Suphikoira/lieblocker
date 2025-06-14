@@ -823,6 +823,38 @@
     
     <!-- Settings Tab -->
     <div class="tab-content" id="settings-tab">
+      <!-- Supabase Configuration -->
+      <div class="setting-card">
+        <div class="section-header">
+          <span class="section-icon">🔗</span>
+          <span>Supabase Configuration</span>
+        </div>
+        
+        <div id="supabase-status" class="api-status">
+          <div class="status-indicator" id="supabase-status-dot"></div>
+          <span id="supabase-status-text">Not configured</span>
+        </div>
+        
+        <div class="setting">
+          <label for="supabase-url">Supabase Project URL</label>
+          <input type="url" id="supabase-url" placeholder="https://your-project.supabase.co">
+          <div id="supabase-url-error" class="error-message" style="display: none;"></div>
+          <div id="supabase-url-success" class="success-message" style="display: none;"></div>
+        </div>
+        
+        <div class="setting">
+          <label for="supabase-anon-key">Supabase Anon Key</label>
+          <input type="password" id="supabase-anon-key" placeholder="Enter your Supabase anon key...">
+          <div id="supabase-anon-key-error" class="error-message" style="display: none;"></div>
+          <div id="supabase-anon-key-success" class="success-message" style="display: none;"></div>
+        </div>
+        
+        <div class="action-buttons">
+          <button class="btn btn-primary" id="test-supabase-connection">Test Connection</button>
+          <button class="btn btn-secondary" id="clear-supabase-config">Clear Config</button>
+        </div>
+      </div>
+      
       <!-- API Configuration -->
       <div class="setting-card">
         <div class="section-header">
@@ -831,7 +863,7 @@
         </div>
         
         <div class="setting">
-          <label for="supadata-token">Supadata API Token</label>
+          <label for="supadata-token">Supadata API Token (Fallback)</label>
           <input type="password" id="supadata-token" placeholder="Enter your Supadata API token...">
           <div id="supadata-token-error" class="error-message" style="display: none;"></div>
           <div id="supadata-token-success" class="success-message" style="display: none;"></div>

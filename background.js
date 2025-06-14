@@ -174,7 +174,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.log('Popup closed, cache update stored in background');
     }
   } else if (message.type === 'checkSupabaseConnection') {
-    // Check Supabase backend connection
+    // Check Supabase connection
     checkSupabaseConnection()
       .then(result => {
         sendResponse(result);
@@ -183,19 +183,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ connected: false, error: error.message });
       });
     return true;
-  } else if (message.type === 'getVideoLiesFromBackend') {
-    // Get lies from Supabase backend
-    getVideoLiesFromBackend(message.videoId, message.minConfidence)
-      .then(result => {
-        sendResponse({ success: true, data: result });
-      })
-      .catch(error => {
-        sendResponse({ success: false, error: error.message });
-      });
-    return true;
-  } else if (message.type === 'submitAnalysisToBackend') {
-    // Submit analysis to Supabase backend
-    submitAnalysisToBackend(message.data)
+  } else if (message.type === 'getSupabaseTranscript') {
+    // Get transcript using Supabase Edge Function
+    getSupabaseTranscript(message.data)
       .then(result => {
         sendResponse({ success: true, data: result });
       })
@@ -209,13 +199,85 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Enhanced function to extract transcript using Supadata API with configurable token
+// Enhanced function to extract transcript with Supabase fallback
 async function handleTranscriptRequest(requestData) {
   const { videoId, currentUrl } = requestData;
   
   try {
-    console.log('🎬 Background: Extracting ENGLISH transcript using Supadata API for video:', videoId);
+    console.log('🎬 Background: Extracting transcript for video:', videoId);
     console.log('🌐 Background: URL being processed:', currentUrl);
+    
+    // First try Supabase Edge Function
+    try {
+      const supabaseResult = await getSupabaseTranscript({ videoId, currentUrl });
+      console.log('✅ Background: Successfully got transcript from Supabase');
+      return supabaseResult;
+    } catch (supabaseError) {
+      console.log('⚠️ Background: Supabase failed, falling back to Supadata:', supabaseError.message);
+      
+      // Fallback to original Supadata API
+      return await getSupadataTranscript({ videoId, currentUrl });
+    }
+
+  } catch (error) {
+    console.error('❌ Background: Error extracting transcript:', error);
+    throw error;
+  }
+}
+
+// Function to get transcript using Supabase Edge Function
+async function getSupabaseTranscript(requestData) {
+  const { videoId, currentUrl } = requestData;
+  
+  try {
+    // Get Supabase credentials from storage
+    const settings = await chrome.storage.sync.get(['supabaseUrl', 'supabaseAnonKey']);
+    const { supabaseUrl, supabaseAnonKey } = settings;
+    
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('Supabase credentials not configured. Please set them in extension settings.');
+    }
+    
+    console.log('📡 Background: Using Supabase Edge Function for transcript');
+    
+    // Call the youtube-transcript Edge Function
+    const response = await fetch(`${supabaseUrl}/functions/v1/youtube-transcript`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        url: currentUrl,
+        lang: 'en' // Force English language
+      })
+    });
+
+    console.log('📡 Background: Supabase response status:', response.status);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('❌ Background: Supabase API Error Response:', errorText);
+      throw new Error(`Supabase Edge Function error: ${response.status} - ${errorText}`);
+    }
+
+    const result = await response.json();
+    console.log('📋 Background: Supabase transcript received');
+    
+    return processSupabaseTranscriptResponse(result);
+
+  } catch (error) {
+    console.error('❌ Background: Error with Supabase transcript:', error);
+    throw error;
+  }
+}
+
+// Function to get transcript using original Supadata API (fallback)
+async function getSupadataTranscript(requestData) {
+  const { videoId, currentUrl } = requestData;
+  
+  try {
+    console.log('📡 Background: Falling back to Supadata API');
     
     // Get Supadata token from storage
     const tokenResult = await chrome.storage.local.get(['supadataToken']);
@@ -231,7 +293,6 @@ async function handleTranscriptRequest(requestData) {
     apiUrl.searchParams.append('lang', 'en'); // Force English language
     
     console.log('📡 Background: Making GET request to:', apiUrl.toString());
-    console.log('🇺🇸 Background: Forcing English language transcript');
     
     const response = await fetch(apiUrl.toString(), {
       method: 'GET',
@@ -241,11 +302,11 @@ async function handleTranscriptRequest(requestData) {
       }
     });
 
-    console.log('📡 Background: Response status:', response.status);
+    console.log('📡 Background: Supadata response status:', response.status);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('❌ Background: API Error Response:', errorText);
+      console.error('❌ Background: Supadata API Error Response:', errorText);
       
       // If English transcript is not available, try without language parameter as fallback
       if (response.status === 404 || errorText.includes('language') || errorText.includes('transcript')) {
@@ -270,74 +331,67 @@ async function handleTranscriptRequest(requestData) {
         
         const fallbackResult = await fallbackResponse.json();
         console.log('📋 Background: Fallback transcript received');
-        console.log('📋 Background: Language:', fallbackResult.lang);
         
-        // Check if the fallback transcript is in English
-        if (fallbackResult.lang && fallbackResult.lang.toLowerCase() !== 'en') {
-          console.warn('⚠️ Background: Video transcript is not in English. Language detected:', fallbackResult.lang);
-          console.warn('⚠️ Background: Proceeding with non-English transcript - results may be less accurate');
-        }
-        
-        return processTranscriptResponse(fallbackResult);
+        return processSupadataTranscriptResponse(fallbackResult);
       }
       
       throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
     }
 
     const result = await response.json();
-    console.log('📋 Background: English transcript API Response received');
-    console.log('📋 Background: Language:', result.lang);
-    console.log('📋 Background: Available languages:', result.availableLangs);
+    console.log('📋 Background: Supadata transcript received');
     
-    // Verify we got English transcript
-    if (result.lang && result.lang.toLowerCase() !== 'en') {
-      console.warn('⚠️ Background: Expected English but got:', result.lang);
-      console.warn('⚠️ Background: Proceeding anyway - results may be less accurate');
-    } else {
-      console.log('✅ Background: Confirmed English transcript received');
-    }
-    
-    return processTranscriptResponse(result);
+    return processSupadataTranscriptResponse(result);
 
   } catch (error) {
-    console.error('❌ Background: Error extracting transcript:', error);
+    console.error('❌ Background: Error with Supadata transcript:', error);
     throw error;
   }
 }
 
-// Helper function to process transcript response
-function processTranscriptResponse(result) {
-  // Extract transcript from the 'content' array in Supadata response
-  if (!result.content || !Array.isArray(result.content)) {
-    console.error('❌ Background: Invalid response structure - no content array:', result);
-    throw new Error('No transcript content found in Supadata API response');
+// Helper function to process Supabase transcript response
+function processSupabaseTranscriptResponse(result) {
+  // Process Supabase Edge Function response format
+  if (!result.transcript || !Array.isArray(result.transcript)) {
+    console.error('❌ Background: Invalid Supabase response structure:', result);
+    throw new Error('No transcript content found in Supabase response');
   }
   
-  // Transform Supadata format to our expected format
-  // Supadata uses: { text, offset (ms), duration (ms), lang }
-  // We need: { text, start (seconds) }
-  const transcript = result.content.map(segment => ({
+  // Transform Supabase format to our expected format
+  const transcript = result.transcript.map(segment => ({
     text: segment.text,
-    start: segment.offset / 1000, // Convert milliseconds to seconds
-    duration: segment.duration / 1000 // Convert milliseconds to seconds (for reference)
+    start: segment.start, // Already in seconds
+    duration: segment.duration || 0
   }));
   
-  console.log('✅ Background: Successfully processed transcript');
+  console.log('✅ Background: Successfully processed Supabase transcript');
   console.log(`✅ Background: ${transcript.length} transcript segments processed`);
-  console.log('📋 Background: Sample transformed segment:', transcript[0]);
-  
-  // Log language information for debugging
-  if (result.lang) {
-    console.log(`🌐 Background: Final transcript language: ${result.lang}`);
-    if (result.lang.toLowerCase() !== 'en') {
-      console.warn('⚠️ Background: WARNING - Transcript is not in English, lie detection accuracy may be reduced');
-    }
-  }
   
   return transcript;
 }
 
-// Supabase backend integration functions
+// Helper function to process Supadata transcript response
+function processSupadataTranscriptResponse(result) {
+  // Extract transcript from the 'content' array in Supadata response
+  if (!result.content || !Array.isArray(result.content)) {
+    console.error('❌ Background: Invalid Supadata response structure:', result);
+    throw new Error('No transcript content found in Supadata API response');
+  }
+  
+  // Transform Supadata format to our expected format
+  const transcript = result.content.map(segment => ({
+    text: segment.text,
+    start: segment.offset / 1000, // Convert milliseconds to seconds
+    duration: segment.duration / 1000 // Convert milliseconds to seconds
+  }));
+  
+  console.log('✅ Background: Successfully processed Supadata transcript');
+  console.log(`✅ Background: ${transcript.length} transcript segments processed`);
+  
+  return transcript;
+}
+
+// Function to check Supabase connection
 async function checkSupabaseConnection() {
   try {
     const settings = await chrome.storage.sync.get(['supabaseUrl', 'supabaseAnonKey']);
@@ -347,86 +401,22 @@ async function checkSupabaseConnection() {
       return { connected: false, error: 'Supabase credentials not configured' };
     }
     
-    // Test connection by making a simple request
-    const response = await fetch(`${supabaseUrl}/rest/v1/videos?limit=1`, {
+    // Test connection by calling a simple Edge Function or REST endpoint
+    const response = await fetch(`${supabaseUrl}/functions/v1/health-check`, {
+      method: 'GET',
       headers: {
-        'apikey': supabaseAnonKey,
         'Authorization': `Bearer ${supabaseAnonKey}`,
         'Content-Type': 'application/json'
       }
     });
     
     if (response.ok) {
-      return { connected: true };
+      return { connected: true, message: 'Supabase connection successful' };
     } else {
       return { connected: false, error: `HTTP ${response.status}` };
     }
   } catch (error) {
     return { connected: false, error: error.message };
-  }
-}
-
-async function getVideoLiesFromBackend(videoId, minConfidence = 0.85) {
-  try {
-    const settings = await chrome.storage.sync.get(['supabaseUrl', 'supabaseAnonKey']);
-    const { supabaseUrl, supabaseAnonKey } = settings;
-    
-    if (!supabaseUrl || !supabaseAnonKey) {
-      throw new Error('Supabase credentials not configured');
-    }
-    
-    const response = await fetch(`${supabaseUrl}/functions/v1/get-video-lies?videoId=${videoId}&minConfidence=${minConfidence}`, {
-      headers: {
-        'Authorization': `Bearer ${supabaseAnonKey}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error('Error fetching video lies from backend:', error);
-    throw error;
-  }
-}
-
-async function submitAnalysisToBackend(analysisData) {
-  try {
-    const settings = await chrome.storage.sync.get(['supabaseUrl']);
-    const { supabaseUrl } = settings;
-    
-    if (!supabaseUrl) {
-      throw new Error('Supabase URL not configured');
-    }
-    
-    // Get user token from storage
-    const tokenResult = await chrome.storage.local.get(['supabaseUserToken']);
-    const userToken = tokenResult.supabaseUserToken;
-    
-    if (!userToken) {
-      throw new Error('User not authenticated with Supabase');
-    }
-    
-    const response = await fetch(`${supabaseUrl}/functions/v1/analyze-video`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${userToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(analysisData)
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error('Error submitting analysis to backend:', error);
-    throw error;
   }
 }
 

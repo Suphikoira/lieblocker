@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LieBlocker",
   "version": "1.0.0",
-  "description": "AI-powered fact-checking for YouTube videos with shared community database",
+  "description": "AI-powered fact-checking for YouTube videos with Supabase integration",
   "permissions": [
     "activeTab",
     "scripting",
