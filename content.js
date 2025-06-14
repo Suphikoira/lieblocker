@@ -525,8 +525,13 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
             let finalTimestamp;
             let finalDuration = claim.duration || 12; // Default 12 seconds
             
-            // Parse the timestamp from the AI response
-            if (claim.timestamp && typeof claim.timestamp === 'string') {
+            // FIXED: Prioritize AI's timeInSeconds first, then timestamp string, then fallback to text search
+            if (claim.timeInSeconds && !isNaN(claim.timeInSeconds)) {
+              // Priority 1: Use AI-provided timeInSeconds (most precise)
+              finalTimeInSeconds = Math.round(claim.timeInSeconds);
+              finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
+            } else if (claim.timestamp && typeof claim.timestamp === 'string') {
+              // Priority 2: Parse timestamp string from AI
               const timestampParts = claim.timestamp.split(':');
               if (timestampParts.length === 2) {
                 const minutes = parseInt(timestampParts[0], 10);
@@ -534,13 +539,12 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
                 finalTimeInSeconds = minutes * 60 + seconds;
                 finalTimestamp = claim.timestamp;
               } else {
+                // Fallback to text search if timestamp format is invalid
                 finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData);
                 finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
               }
-            } else if (claim.timeInSeconds && !isNaN(claim.timeInSeconds)) {
-              finalTimeInSeconds = Math.round(claim.timeInSeconds);
-              finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
             } else {
+              // Priority 3: Fallback to text-based search (least precise)
               finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData);
               finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
             }
