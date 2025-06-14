@@ -917,15 +917,19 @@ function createLieId(lie) {
 // Enhanced function to start skip mode monitoring
 function startSkipModeMonitoring() {
   if (skipModeActive) {
+    console.log('⏭️ Skip mode already active');
     return;
   }
   
   if (!currentVideoLies || currentVideoLies.length === 0) {
+    console.log('⏭️ No lies to monitor for skipping');
     return;
   }
   
   skipModeActive = true;
   skippedLiesInSession.clear();
+  console.log('🚀 Skip mode monitoring started with', currentVideoLies.length, 'lies to monitor');
+  console.log('🚀 Lies to monitor:', currentVideoLies.map(l => `${l.timestamp} (${l.timeInSeconds}s-${l.timeInSeconds + l.duration}s)`));
   
   if (skipModeInterval) {
     clearInterval(skipModeInterval);
@@ -943,6 +947,7 @@ function stopSkipModeMonitoring() {
   }
   
   skipModeActive = false;
+  console.log('⏹️ Skip mode monitoring stopped');
   
   if (skipModeInterval) {
     clearInterval(skipModeInterval);
@@ -950,16 +955,23 @@ function stopSkipModeMonitoring() {
   }
 }
 
-// Enhanced function to check and skip lies with FIXED timestamp logic
+// Enhanced function to check and skip lies with comprehensive debugging
 function checkAndSkipLies() {
   try {
     const video = document.querySelector('video');
     if (!video) {
+      console.log('⏭️ Skip mode: Video element not found');
       return;
     }
     
     const currentTime = video.currentTime;
     const isPlaying = !video.paused && !video.ended && video.readyState > 2;
+    
+    // Log current state every 10 seconds for debugging
+    if (Math.floor(currentTime) % 10 === 0 && Math.floor(currentTime * 4) % 4 === 0) {
+      console.log(`⏭️ Skip mode: Current time: ${currentTime.toFixed(2)}s, Is playing: ${isPlaying}, Video state: paused=${video.paused}, ended=${video.ended}, readyState=${video.readyState}`);
+      console.log(`⏭️ Skip mode: Monitoring ${currentVideoLies.length} lies, Already skipped: ${skippedLiesInSession.size}`);
+    }
     
     if (!isPlaying) {
       return;
@@ -971,14 +983,31 @@ function checkAndSkipLies() {
       const lieEnd = lieStart + lieDuration;
       const lieId = createLieId(lie);
       
+      // Log when we're approaching a lie (within 5 seconds)
+      if (currentTime >= lieStart - 5 && currentTime < lieStart && !skippedLiesInSession.has(lieId)) {
+        console.log(`⏭️ Skip mode: Approaching lie at ${lie.timestamp} in ${(lieStart - currentTime).toFixed(1)}s`);
+        console.log(`⏭️ Skip mode: Lie details - Start: ${lieStart}s, Duration: ${lieDuration}s, End: ${lieEnd}s`);
+        console.log(`⏭️ Skip mode: Claim: "${lie.claim.substring(0, 100)}..."`);
+      }
+      
       if (currentTime >= lieStart && currentTime < lieEnd) {
         if (skippedLiesInSession.has(lieId)) {
+          console.log(`⏭️ Skip mode: Lie already skipped: ${lie.timestamp}`);
           continue;
         }
+        
+        console.log(`🚨 SKIP MODE: SKIPPING LIE NOW!`);
+        console.log(`🚨 Skip mode: Current time: ${currentTime.toFixed(2)}s`);
+        console.log(`🚨 Skip mode: Lie start: ${lieStart}s (${lie.timestamp})`);
+        console.log(`🚨 Skip mode: Lie duration: ${lieDuration}s`);
+        console.log(`🚨 Skip mode: Lie end: ${lieEnd}s`);
+        console.log(`🚨 Skip mode: Claim: "${lie.claim}"`);
         
         skippedLiesInSession.add(lieId);
         
         const skipToTime = lieEnd + 1;
+        console.log(`🚨 Skip mode: Jumping to ${skipToTime}s`);
+        
         video.currentTime = skipToTime;
         
         const url = new URL(window.location.href);
@@ -987,12 +1016,15 @@ function checkAndSkipLies() {
         
         showSkipNotification(lie, lieDuration);
         
+        console.log(`✅ Skip mode: Successfully skipped to ${skipToTime}s (after ${lieDuration}s lie)`);
+        console.log(`✅ Skip mode: Total lies skipped this session: ${skippedLiesInSession.size}`);
+        
         break;
       }
     }
     
   } catch (error) {
-    console.error('Error in checkAndSkipLies:', error);
+    console.error('❌ Error in checkAndSkipLies:', error);
   }
 }
 
@@ -1071,6 +1103,8 @@ function showSkipNotification(lie, duration) {
 
 // Function to handle detection mode updates
 function updateDetectionMode(mode) {
+  console.log('🔧 Detection mode updated to:', mode);
+  
   if (mode === 'skip') {
     if (currentVideoLies && currentVideoLies.length > 0) {
       startSkipModeMonitoring();
@@ -1119,6 +1153,7 @@ function handlePageNavigation() {
   const currentVideoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
   
   if (currentVideoId !== lastVideoId) {
+    console.log('🔄 New video detected, resetting skip mode state');
     stopSkipModeMonitoring();
     currentVideoLies = [];
     skippedLiesInSession.clear();
