@@ -35,7 +35,7 @@ async function getTranscript() {
   }
 }
 
-// Function to prepare full transcript for analysis with configurable duration
+// Function to prepare full transcript for analysis with configurable duration and enhanced mapping
 async function prepareFullTranscript(transcript) {
   // Get user-configured analysis duration (default to 20 minutes)
   const settings = await chrome.storage.sync.get(['analysisDuration']);
@@ -58,13 +58,16 @@ async function prepareFullTranscript(transcript) {
     return null;
   }
   
-  // Build the full text with precise timestamp mapping
+  // Build the full text with precise timestamp mapping and character-to-segment mapping
   let fullText = '';
   let segmentTimestamps = [];
   let timestampMap = new Map(); // Map text positions to exact timestamps
+  let charToSegmentIndexMap = new Map(); // NEW: Map character positions to segment indices
   
-  for (const segment of filteredTranscript) {
+  for (let segmentIndex = 0; segmentIndex < filteredTranscript.length; segmentIndex++) {
+    const segment = filteredTranscript[segmentIndex];
     const segmentText = segment.text.trim();
+    
     if (segmentText) {
       const segmentStartPos = fullText.length;
       
@@ -81,6 +84,7 @@ async function prepareFullTranscript(transcript) {
       const segmentInfo = {
         text: segmentText,
         timestamp: segment.start,
+        duration: segment.duration || 0, // Include duration from original transcript
         startPos: segmentStartPos + (fullText.length > segmentText.length ? 1 : 0),
         endPos: segmentEndPos,
         formattedTime: formatSecondsToTimestamp(segment.start)
@@ -88,9 +92,10 @@ async function prepareFullTranscript(transcript) {
       
       segmentTimestamps.push(segmentInfo);
       
-      // Map every character position in this segment to its timestamp
+      // Map every character position in this segment to its timestamp and segment index
       for (let pos = segmentInfo.startPos; pos < segmentInfo.endPos; pos++) {
         timestampMap.set(pos, segment.start);
+        charToSegmentIndexMap.set(pos, segmentIndex); // NEW: Map to segment index
       }
     }
   }
@@ -106,6 +111,7 @@ async function prepareFullTranscript(transcript) {
     endTime: endTime,
     segmentTimestamps: segmentTimestamps,
     timestampMap: timestampMap,
+    charToSegmentIndexMap: charToSegmentIndexMap, // NEW: Include character-to-segment mapping
     timeWindow: `0:00 - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`,
     totalSegments: filteredTranscript.length,
     analysisDuration: ANALYSIS_LIMIT_MINUTES
@@ -333,56 +339,127 @@ Example response:
 IMPORTANT: Only return the JSON object. Do not include any other text.`;
 }
 
-// Enhanced function to find precise timestamp for a claim using improved text matching
-function findClaimTimestamp(claim, transcriptData) {
+// NEW: Enhanced function to find precise timestamp and duration using n-gram fallback
+function findClaimStartAndEnd(claimText, transcriptData) {
   // Clean and normalize the claim text for better matching
-  const normalizedClaim = claim.toLowerCase()
+  const normalizedClaim = claimText.toLowerCase()
     .replace(/[^\w\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   
-  // Split into words and create search phrases
+  const fullText = transcriptData.text.toLowerCase();
+  
+  // PRIORITY 1: Try exact phrase match in full text
+  const exactMatchIndex = fullText.indexOf(normalizedClaim);
+  if (exactMatchIndex !== -1) {
+    const matchEndIndex = exactMatchIndex + normalizedClaim.length;
+    
+    // Use character-to-segment mapping to find start and end segments
+    const startSegmentIndex = transcriptData.charToSegmentIndexMap.get(exactMatchIndex);
+    const endSegmentIndex = transcriptData.charToSegmentIndexMap.get(Math.min(matchEndIndex - 1, fullText.length - 1));
+    
+    if (startSegmentIndex !== undefined && endSegmentIndex !== undefined) {
+      const startSegment = transcriptData.segmentTimestamps[startSegmentIndex];
+      const endSegment = transcriptData.segmentTimestamps[endSegmentIndex];
+      
+      const startInSeconds = startSegment.timestamp;
+      const endInSeconds = endSegment.timestamp + (endSegment.duration || 5);
+      const duration = Math.max(5, Math.min(endInSeconds - startInSeconds, 30));
+      
+      return {
+        startInSeconds: Math.round(startInSeconds),
+        endInSeconds: Math.round(endInSeconds),
+        duration: Math.round(duration)
+      };
+    }
+  }
+  
+  // PRIORITY 2: N-gram fallback with 3-word combinations
   const claimWords = normalizedClaim.split(/\s+/).filter(word => word.length > 2);
   
-  // Try to find exact phrase matches first
+  if (claimWords.length === 0) {
+    // Fallback to transcript start if no valid words
+    return {
+      startInSeconds: Math.round(transcriptData.startTime),
+      endInSeconds: Math.round(transcriptData.startTime + 12),
+      duration: 12
+    };
+  }
+  
+  // Generate n-grams (3-word, 2-word, 1-word combinations)
+  const nGrams = [];
+  
+  // 3-word combinations (highest priority)
+  for (let i = 0; i <= claimWords.length - 3; i++) {
+    nGrams.push({
+      text: claimWords.slice(i, i + 3).join(' '),
+      score: 30,
+      type: '3-gram'
+    });
+  }
+  
+  // 2-word combinations (medium priority)
+  for (let i = 0; i <= claimWords.length - 2; i++) {
+    nGrams.push({
+      text: claimWords.slice(i, i + 2).join(' '),
+      score: 15,
+      type: '2-gram'
+    });
+  }
+  
+  // 1-word combinations (lowest priority)
+  claimWords.forEach(word => {
+    nGrams.push({
+      text: word,
+      score: 5,
+      type: '1-gram'
+    });
+  });
+  
+  // Search for best n-gram match in segments
   let bestMatch = null;
   let bestScore = 0;
   
-  // Search through each segment for the best match
   for (const segment of transcriptData.segmentTimestamps) {
     const segmentText = segment.text.toLowerCase();
-    let score = 0;
+    let totalScore = 0;
     
-    // Check for exact phrase match (highest priority)
-    if (segmentText.includes(normalizedClaim)) {
-      score = 100;
-    } else {
-      // Check for partial matches with individual words
-      for (const word of claimWords) {
-        const wordRegex = new RegExp(`\\b${word}\\b`, 'i');
-        if (wordRegex.test(segmentText)) {
-          score += 5; // Points for each matching word
+    for (const nGram of nGrams) {
+      if (segmentText.includes(nGram.text)) {
+        totalScore += nGram.score;
+        
+        // Bonus for exact word boundaries
+        const wordBoundaryRegex = new RegExp(`\\b${nGram.text.replace(/\s+/g, '\\s+')}\\b`);
+        if (wordBoundaryRegex.test(segmentText)) {
+          totalScore += nGram.score * 0.5; // 50% bonus for word boundaries
         }
-      }
-      
-      // Bonus for higher word density
-      if (score > 0) {
-        const matchRatio = score / (claimWords.length * 5);
-        score = score * (1 + matchRatio);
       }
     }
     
-    if (score > bestScore) {
-      bestScore = score;
+    if (totalScore > bestScore) {
+      bestScore = totalScore;
       bestMatch = segment;
     }
   }
   
   if (bestMatch && bestScore > 10) {
-    return Math.round(bestMatch.timestamp);
-  } else {
-    return Math.round(transcriptData.startTime);
+    const startInSeconds = bestMatch.timestamp;
+    const estimatedDuration = Math.max(8, Math.min(claimText.length / 10, 25)); // Estimate based on text length
+    const endInSeconds = startInSeconds + estimatedDuration;
+    
+    return {
+      startInSeconds: Math.round(startInSeconds),
+      endInSeconds: Math.round(endInSeconds),
+      duration: Math.round(estimatedDuration)
+    };
   }
+  
+  // Final fallback: use transcript start with default duration
+  return {
+    startInSeconds: Math.round(transcriptData.startTime),
+    endInSeconds: Math.round(transcriptData.startTime + 12),
+    duration: 12
+  };
 }
 
 // Function to analyze lies in full transcript with simplified processing and configurable duration
@@ -521,74 +598,26 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
         // Enhanced post-processing for accurate timestamps and durations
         if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
           parsedResult.claims = parsedResult.claims.map((claim, index) => {
-            let finalTimeInSeconds;
-            let finalTimestamp;
-            let finalDuration = claim.duration || 12; // Default 12 seconds
+            // Use the new findClaimStartAndEnd function for precise timestamp and duration
+            const { startInSeconds, endInSeconds, duration } = findClaimStartAndEnd(claim.claim, transcriptData);
             
-            // FIXED: Prioritize AI's timeInSeconds first, then timestamp string, then fallback to text search
-            if (claim.timeInSeconds && !isNaN(claim.timeInSeconds)) {
-              // Priority 1: Use AI-provided timeInSeconds (most precise)
-              finalTimeInSeconds = Math.round(claim.timeInSeconds);
-              finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
-            } else if (claim.timestamp && typeof claim.timestamp === 'string') {
-              // Priority 2: Parse timestamp string from AI
-              const timestampParts = claim.timestamp.split(':');
-              if (timestampParts.length === 2) {
-                const minutes = parseInt(timestampParts[0], 10);
-                const seconds = parseInt(timestampParts[1], 10);
-                finalTimeInSeconds = minutes * 60 + seconds;
-                finalTimestamp = claim.timestamp;
-              } else {
-                // Fallback to text search if timestamp format is invalid
-                finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData);
-                finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
-              }
-            } else {
-              // Priority 3: Fallback to text-based search (least precise)
-              finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData);
-              finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
-            }
+            // Apply 2-second offset to start slightly before the lie
+            const TIMESTAMP_OFFSET_SECONDS = 2;
+            const finalTimeInSeconds = Math.max(transcriptData.startTime, startInSeconds - TIMESTAMP_OFFSET_SECONDS);
+            const finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
             
             // Ensure timestamp is within bounds
-            finalTimeInSeconds = Math.max(transcriptData.startTime, Math.min(finalTimeInSeconds, transcriptData.endTime));
-            finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
-            
-            // Enhanced duration estimation based on claim complexity and AI suggestion
-            if (claim.duration && claim.duration >= 5 && claim.duration <= 30) {
-              // Use AI-provided duration if it's reasonable
-              finalDuration = Math.round(claim.duration);
-            } else {
-              // Estimate duration based on claim length and complexity
-              const claimLength = claim.claim.length;
-              const wordCount = claim.claim.split(/\s+/).length;
-              
-              if (claimLength < 50 || wordCount < 8) {
-                finalDuration = 8; // Short, simple claims
-              } else if (claimLength < 100 || wordCount < 15) {
-                finalDuration = 12; // Medium claims
-              } else if (claimLength < 200 || wordCount < 25) {
-                finalDuration = 18; // Longer claims
-              } else {
-                finalDuration = 25; // Complex, extended claims
-              }
-              
-              // Add extra time for high severity lies (usually more elaborated)
-              if (claim.severity === 'high') {
-                finalDuration += 5;
-              }
-              
-              // Ensure bounds
-              finalDuration = Math.max(5, Math.min(finalDuration, 30));
-            }
+            const boundedTimeInSeconds = Math.max(transcriptData.startTime, Math.min(finalTimeInSeconds, transcriptData.endTime));
+            const boundedTimestamp = formatSecondsToTimestamp(boundedTimeInSeconds);
             
             // Ensure minimum confidence of 85%
             const adjustedConfidence = Math.max(0.85, claim.confidence || 0.85);
             
             return {
               ...claim,
-              timestamp: finalTimestamp,
-              timeInSeconds: finalTimeInSeconds,
-              duration: finalDuration,
+              timestamp: boundedTimestamp,
+              timeInSeconds: boundedTimeInSeconds,
+              duration: duration,
               confidence: adjustedConfidence,
               severity: claim.severity || 'medium'
             };
