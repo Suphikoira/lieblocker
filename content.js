@@ -22,10 +22,25 @@ async function getTranscript() {
 
   } catch (error) {
     console.error('❌ Error extracting transcript:', error);
+    
+    // Provide more specific error messages
+    let errorMessage = error.message;
+    if (error.message.includes('401') || error.message.includes('unauthorized')) {
+      errorMessage = 'API authentication failed. Please check your API credentials in Settings:\n\n' +
+                   '1. Verify your Supabase URL and Anon Key are correct\n' +
+                   '2. Check your Supadata API token\n' +
+                   '3. Make sure your Supabase Edge Function is deployed\n\n' +
+                   'Original error: ' + error.message;
+    } else if (error.message.includes('404')) {
+      errorMessage = 'Transcript not available for this video. The video may not have captions enabled.';
+    } else if (error.message.includes('403')) {
+      errorMessage = 'Access forbidden. Your API key may not have the required permissions.';
+    }
+    
     try {
       chrome.runtime.sendMessage({
         type: 'analysisResult',
-        data: `Error: ${error.message}. Make sure the video has closed captions available and your API credentials are configured.`
+        data: `Error: ${errorMessage}`
       });
     } catch (msgError) {
       console.error('Error sending message:', msgError);

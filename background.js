@@ -258,7 +258,17 @@ async function getSupabaseTranscript(requestData) {
     if (!response.ok) {
       const errorText = await response.text();
       console.error('❌ Background: Supabase API Error Response:', errorText);
-      throw new Error(`Supabase Edge Function error: ${response.status} - ${errorText}`);
+      
+      // Provide more specific error messages
+      if (response.status === 401) {
+        throw new Error('Supabase authentication failed. Please check your Supabase URL and Anon Key in Settings.');
+      } else if (response.status === 404) {
+        throw new Error('Supabase Edge Function not found. Make sure the youtube-transcript function is deployed.');
+      } else if (response.status === 403) {
+        throw new Error('Supabase access forbidden. Check your RLS policies and API key permissions.');
+      } else {
+        throw new Error(`Supabase Edge Function error: ${response.status} - ${errorText}`);
+      }
     }
 
     const result = await response.json();
@@ -308,8 +318,12 @@ async function getSupadataTranscript(requestData) {
       const errorText = await response.text();
       console.error('❌ Background: Supadata API Error Response:', errorText);
       
-      // If English transcript is not available, try without language parameter as fallback
-      if (response.status === 404 || errorText.includes('language') || errorText.includes('transcript')) {
+      // Provide more specific error messages
+      if (response.status === 401) {
+        throw new Error('Supadata API authentication failed. Please check your API token in Settings.');
+      } else if (response.status === 403) {
+        throw new Error('Supadata API access forbidden. Your API key may not have the required permissions.');
+      } else if (response.status === 404 || errorText.includes('language') || errorText.includes('transcript')) {
         console.log('🔄 Background: English transcript not available, trying auto-detect...');
         
         // Retry without language parameter
@@ -333,9 +347,9 @@ async function getSupadataTranscript(requestData) {
         console.log('📋 Background: Fallback transcript received');
         
         return processSupadataTranscriptResponse(fallbackResult);
+      } else {
+        throw new Error(`Supadata API error: ${response.status} - ${errorText}`);
       }
-      
-      throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
     }
 
     const result = await response.json();
@@ -401,17 +415,21 @@ async function checkSupabaseConnection() {
       return { connected: false, error: 'Supabase credentials not configured' };
     }
     
-    // Test connection by calling a simple Edge Function or REST endpoint
-    const response = await fetch(`${supabaseUrl}/functions/v1/health-check`, {
+    // Test connection by calling the REST API root endpoint
+    const response = await fetch(`${supabaseUrl}/rest/v1/`, {
       method: 'GET',
       headers: {
+        'apikey': supabaseAnonKey,
         'Authorization': `Bearer ${supabaseAnonKey}`,
         'Content-Type': 'application/json'
       }
     });
     
-    if (response.ok) {
+    if (response.ok || response.status === 404) {
+      // 404 is expected for the root endpoint, it means we can connect
       return { connected: true, message: 'Supabase connection successful' };
+    } else if (response.status === 401) {
+      return { connected: false, error: 'Invalid Supabase credentials' };
     } else {
       return { connected: false, error: `HTTP ${response.status}` };
     }
