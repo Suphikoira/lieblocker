@@ -173,6 +173,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } catch (error) {
       console.log('Popup closed, cache update stored in background');
     }
+  } else if (message.type === 'checkSupabaseConnection') {
+    // Check Supabase backend connection
+    checkSupabaseConnection()
+      .then(result => {
+        sendResponse(result);
+      })
+      .catch(error => {
+        sendResponse({ connected: false, error: error.message });
+      });
+    return true;
+  } else if (message.type === 'getVideoLiesFromBackend') {
+    // Get lies from Supabase backend
+    getVideoLiesFromBackend(message.videoId, message.minConfidence)
+      .then(result => {
+        sendResponse({ success: true, data: result });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
+  } else if (message.type === 'submitAnalysisToBackend') {
+    // Submit analysis to Supabase backend
+    submitAnalysisToBackend(message.data)
+      .then(result => {
+        sendResponse({ success: true, data: result });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true;
   }
   
   // Must return true if response is async
@@ -305,6 +335,99 @@ function processTranscriptResponse(result) {
   }
   
   return transcript;
+}
+
+// Supabase backend integration functions
+async function checkSupabaseConnection() {
+  try {
+    const settings = await chrome.storage.sync.get(['supabaseUrl', 'supabaseAnonKey']);
+    const { supabaseUrl, supabaseAnonKey } = settings;
+    
+    if (!supabaseUrl || !supabaseAnonKey) {
+      return { connected: false, error: 'Supabase credentials not configured' };
+    }
+    
+    // Test connection by making a simple request
+    const response = await fetch(`${supabaseUrl}/rest/v1/videos?limit=1`, {
+      headers: {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (response.ok) {
+      return { connected: true };
+    } else {
+      return { connected: false, error: `HTTP ${response.status}` };
+    }
+  } catch (error) {
+    return { connected: false, error: error.message };
+  }
+}
+
+async function getVideoLiesFromBackend(videoId, minConfidence = 0.85) {
+  try {
+    const settings = await chrome.storage.sync.get(['supabaseUrl', 'supabaseAnonKey']);
+    const { supabaseUrl, supabaseAnonKey } = settings;
+    
+    if (!supabaseUrl || !supabaseAnonKey) {
+      throw new Error('Supabase credentials not configured');
+    }
+    
+    const response = await fetch(`${supabaseUrl}/functions/v1/get-video-lies?videoId=${videoId}&minConfidence=${minConfidence}`, {
+      headers: {
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching video lies from backend:', error);
+    throw error;
+  }
+}
+
+async function submitAnalysisToBackend(analysisData) {
+  try {
+    const settings = await chrome.storage.sync.get(['supabaseUrl']);
+    const { supabaseUrl } = settings;
+    
+    if (!supabaseUrl) {
+      throw new Error('Supabase URL not configured');
+    }
+    
+    // Get user token from storage
+    const tokenResult = await chrome.storage.local.get(['supabaseUserToken']);
+    const userToken = tokenResult.supabaseUserToken;
+    
+    if (!userToken) {
+      throw new Error('User not authenticated with Supabase');
+    }
+    
+    const response = await fetch(`${supabaseUrl}/functions/v1/analyze-video`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${userToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(analysisData)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Error submitting analysis to backend:', error);
+    throw error;
+  }
 }
 
 // Enhanced notification system for analysis completion

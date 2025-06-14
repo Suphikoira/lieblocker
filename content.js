@@ -109,7 +109,47 @@ function formatSecondsToTimestamp(seconds) {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Function to get cached analysis results
+// Function to check for existing analysis in Supabase backend
+async function getExistingAnalysis(videoId) {
+  try {
+    // Check if Supabase is enabled
+    const settings = await chrome.storage.sync.get(['useSupabaseBackend']);
+    if (!settings.useSupabaseBackend) {
+      return null;
+    }
+
+    chrome.runtime.sendMessage({
+      type: 'analysisProgress',
+      stage: 'backend_check',
+      message: 'Checking shared database for existing analysis...'
+    });
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'getVideoLiesFromBackend',
+      videoId: videoId,
+      minConfidence: 0.85
+    });
+
+    if (response.success && response.data.hasAnalysis) {
+      console.log('📋 Found existing analysis in Supabase backend');
+      return {
+        analysis: `✅ Analysis loaded from shared database!\n\nFound ${response.data.totalLies} lies from community analysis.\nAnalysis version: ${response.data.analysis.version}\nCreated: ${new Date(response.data.analysis.createdAt).toLocaleDateString()}`,
+        claims: response.data.lies,
+        timestamp: Date.now(),
+        videoId: videoId,
+        version: response.data.analysis.version,
+        source: 'supabase'
+      };
+    }
+
+    return null;
+  } catch (error) {
+    console.error('Error checking Supabase backend:', error);
+    return null;
+  }
+}
+
+// Function to get cached analysis results (local cache)
 async function getCachedAnalysis(videoId) {
   try {
     const result = await chrome.storage.local.get(`analysis_${videoId}`);
@@ -120,6 +160,7 @@ async function getCachedAnalysis(videoId) {
       const maxAge = 24 * 60 * 60 * 1000; // 24 hours
       
       if (cacheAge < maxAge) {
+        console.log('📋 Found cached analysis locally');
         if (cached.claims && cached.claims.length > 0) {
           storeDetectedLiesForDownload(cached.claims, videoId);
         }
@@ -136,7 +177,7 @@ async function getCachedAnalysis(videoId) {
   }
 }
 
-// Function to save analysis results to cache
+// Function to save analysis results to cache and optionally to backend
 async function saveAnalysisToCache(videoId, analysisText, lies = []) {
   try {
     const cacheData = {
@@ -144,12 +185,26 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
       claims: lies,
       timestamp: Date.now(),
       videoId: videoId,
-      version: '2.1'
+      version: '2.1',
+      source: 'local'
     };
     
+    // Save to local cache
     await chrome.storage.local.set({
       [`analysis_${videoId}`]: cacheData
     });
+    
+    console.log('💾 Analysis saved to local cache');
+    
+    // Check if should submit to Supabase backend
+    const settings = await chrome.storage.sync.get(['useSupabaseBackend', 'autoSubmitToBackend']);
+    if (settings.useSupabaseBackend && settings.autoSubmitToBackend && lies.length > 0) {
+      try {
+        await submitAnalysisToBackend(videoId, lies);
+      } catch (error) {
+        console.error('Failed to submit to backend, but local analysis saved:', error);
+      }
+    }
     
     storeDetectedLiesForDownload(lies, videoId);
     
@@ -161,6 +216,66 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     
   } catch (error) {
     console.error('Error saving analysis to cache:', error);
+  }
+}
+
+// Function to submit analysis to Supabase backend
+async function submitAnalysisToBackend(videoId, lies) {
+  try {
+    chrome.runtime.sendMessage({
+      type: 'analysisProgress',
+      stage: 'backend_submit',
+      message: 'Submitting analysis to shared database...'
+    });
+
+    // Get video metadata
+    const videoTitle = document.querySelector('h1.ytd-video-primary-info-renderer')?.textContent?.trim();
+    const channelName = document.querySelector('#text.ytd-channel-name')?.textContent?.trim();
+    
+    // Transform lies to backend format
+    const backendLies = lies.map(lie => ({
+      timestamp_seconds: lie.timeInSeconds,
+      duration_seconds: lie.duration,
+      claim_text: lie.claim,
+      explanation: lie.explanation,
+      confidence: lie.confidence,
+      severity: lie.severity,
+      category: lie.category || 'other'
+    }));
+
+    const settings = await chrome.storage.sync.get(['analysisDuration']);
+    const analysisDuration = settings.analysisDuration || 20;
+
+    const response = await chrome.runtime.sendMessage({
+      type: 'submitAnalysisToBackend',
+      data: {
+        videoId: videoId,
+        videoTitle: videoTitle,
+        channelName: channelName,
+        lies: backendLies,
+        analysisDuration: analysisDuration,
+        confidenceThreshold: 0.85
+      }
+    });
+
+    if (response.success) {
+      console.log('✅ Analysis submitted to Supabase backend');
+      chrome.runtime.sendMessage({
+        type: 'analysisProgress',
+        stage: 'backend_success',
+        message: 'Analysis shared with community database!'
+      });
+    } else {
+      throw new Error(response.error);
+    }
+
+  } catch (error) {
+    console.error('Error submitting to backend:', error);
+    chrome.runtime.sendMessage({
+      type: 'analysisProgress',
+      stage: 'backend_error',
+      message: `Failed to share with community: ${error.message}`
+    });
   }
 }
 
@@ -515,7 +630,8 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
               timeInSeconds: finalTimeInSeconds,
               duration: finalDuration,
               confidence: adjustedConfidence,
-              severity: claim.severity || 'medium'
+              severity: claim.severity || 'medium',
+              category: claim.category || 'other'
             };
           });
           
@@ -579,7 +695,7 @@ async function updateSessionStats(newLies = []) {
   }
 }
 
-// Main function to process video
+// Main function to process video with Supabase integration
 async function processVideo() {
   try {
     const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
@@ -598,10 +714,41 @@ async function processVideo() {
       videoId: videoId
     });
 
+    // First check Supabase backend for existing analysis
+    const backendAnalysis = await getExistingAnalysis(videoId);
+    if (backendAnalysis) {
+      chrome.runtime.sendMessage({
+        type: 'analysisProgress',
+        stage: 'backend_found',
+        message: 'Loading analysis from shared database...'
+      });
+      
+      if (backendAnalysis.claims && backendAnalysis.claims.length > 0) {
+        chrome.runtime.sendMessage({
+          type: 'liesUpdate',
+          claims: backendAnalysis.claims,
+          isComplete: true
+        });
+        
+        const settings = await chrome.storage.sync.get(['detectionMode']);
+        if (settings.detectionMode === 'skip') {
+          currentVideoLies = backendAnalysis.claims;
+          startSkipModeMonitoring();
+        }
+      }
+      
+      chrome.runtime.sendMessage({
+        type: 'analysisResult',
+        data: backendAnalysis.analysis
+      });
+      return;
+    }
+
+    // Check local cache if no backend analysis
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'cache_check',
-      message: 'Checking for cached analysis...'
+      message: 'Checking local cache...'
     });
 
     const cachedAnalysis = await getCachedAnalysis(videoId);
@@ -628,11 +775,12 @@ async function processVideo() {
       
       chrome.runtime.sendMessage({
         type: 'analysisResult',
-        data: cachedAnalysis.analysis + '\n\nAnalysis loaded from cache!'
+        data: cachedAnalysis.analysis + '\n\nAnalysis loaded from local cache!'
       });
       return;
     }
 
+    // No existing analysis found, proceed with fresh analysis
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'transcript_extraction',

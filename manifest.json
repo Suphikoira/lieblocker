@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "LieBlocker",
   "version": "1.0.0",
-  "description": "AI-powered fact-checking for YouTube videos",
+  "description": "AI-powered fact-checking for YouTube videos with shared community database",
   "permissions": [
     "activeTab",
     "scripting",
@@ -13,7 +13,8 @@
     "https://*.youtube.com/*",
     "https://api.supadata.ai/*",
     "https://api.openai.com/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://*.supabase.co/*"
   ],
   "content_scripts": [
     {
