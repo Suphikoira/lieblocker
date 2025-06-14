@@ -804,7 +804,7 @@
       <div class="stats-card">
         <div class="stats-title">
           <span>🚨</span>
-          <span>Lies Detected</span>
+          <span>High-Confidence Lies (85%+)</span>
         </div>
         <div class="lies-indicator">
           <div class="lies-circle" id="lies-circle">
@@ -849,13 +849,13 @@
       <div class="stats-card">
         <div class="section-header">
           <span class="section-icon">🚨</span>
-          <span>Detected Lies with Skip</span>
+          <span>High-Confidence Lies (85%+)</span>
         </div>
         <div class="lies-list" id="lies-list">
           <!-- Lies will be populated here -->
         </div>
         <div class="no-lies-message" id="no-lies-message">
-          No lies detected for the current video.
+          No high-confidence lies detected for the current video.
         </div>
       </div>
     </div>
@@ -929,22 +929,13 @@
         </div>
         
         <div class="setting">
-          <label for="global-sensitivity">Detection Threshold</label>
-          <select id="global-sensitivity">
-            <option value="conservative">Ultra-Conservative (Highest confidence only)</option>
-            <option value="balanced">Balanced (High confidence required)</option>
-            <option value="aggressive">Sensitive (Moderate confidence)</option>
-          </select>
-        </div>
-        
-        <div class="setting">
           <label for="analysis-duration">Analysis Duration</label>
           <div class="duration-setting">
             <input type="range" id="analysis-duration" class="duration-input" min="5" max="60" value="20" step="5">
             <div class="duration-display" id="duration-display">20 min</div>
           </div>
           <div class="setting-description">
-            Set how many minutes of the video to analyze. Longer durations provide more comprehensive results but take more time and may cost more.
+            Set how many minutes of the video to analyze. Longer durations provide more comprehensive results but take more time and may cost more. Only lies with 85%+ confidence are shown.
           </div>
         </div>
       </div>

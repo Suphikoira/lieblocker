@@ -408,30 +408,13 @@ async function cleanOldCache() {
 }
 
 // Simplified system prompt function with improved lie detection criteria and configurable duration
-function buildSystemPrompt(sensitivity, analysisDuration) {
-  const baseSensitivity = {
-    conservative: {
-      threshold: 'very high confidence (90%+)',
-      focus: 'only clear, verifiable false claims with strong evidence'
-    },
-    balanced: {
-      threshold: 'high confidence (80%+)',
-      focus: 'false or misleading claims with good evidence'
-    },
-    aggressive: {
-      threshold: 'moderate confidence (70%+)',
-      focus: 'false, misleading, or questionable claims'
-    }
-  };
-
-  const config = baseSensitivity[sensitivity] || baseSensitivity.balanced;
-
+function buildSystemPrompt(analysisDuration) {
   return `You are a fact-checking expert. Analyze this ${analysisDuration}-minute YouTube transcript and identify false or misleading claims.
 
 DETECTION CRITERIA:
 - Only flag factual claims, not opinions or predictions
-- Require ${config.threshold} before flagging
-- Focus on ${config.focus}
+- Require very high confidence (90%+) before flagging
+- Focus on clear, verifiable false claims with strong evidence
 - Be specific about what makes each claim problematic
 - Consider context and intent
 - Err on the side of caution to avoid false positives
@@ -548,7 +531,7 @@ function findClaimTimestamp(claim, transcriptData) {
 }
 
 // Function to analyze lies in full transcript with simplified processing and configurable duration
-async function analyzeLies(transcriptData, sensitivity = 'balanced') {
+async function analyzeLies(transcriptData) {
   try {
     // Send progress update
     chrome.runtime.sendMessage({
@@ -580,11 +563,11 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
       return null;
     }
 
-    console.log('Analyzing lies with sensitivity:', sensitivity);
+    console.log('Analyzing lies with high confidence threshold (85%+)');
     console.log('Time window:', transcriptData.timeWindow);
     console.log(`Using ${provider} model:`, model);
     
-    const systemPrompt = buildSystemPrompt(sensitivity, transcriptData.analysisDuration);
+    const systemPrompt = buildSystemPrompt(transcriptData.analysisDuration);
     
     // Create a structured transcript with clear timestamps for the AI
     const structuredTranscript = transcriptData.segmentTimestamps.map(segment => {
@@ -747,17 +730,8 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
               console.log(`📏 Estimated duration based on complexity: ${finalDuration}s (${claimLength} chars, ${wordCount} words)`);
             }
             
-            // Ensure minimum confidence based on sensitivity
-            const minConfidence = {
-              conservative: 0.90,
-              balanced: 0.80,
-              aggressive: 0.70
-            };
-            
-            const adjustedConfidence = Math.max(
-              minConfidence[sensitivity] || 0.80,
-              claim.confidence || 0.80
-            );
+            // Ensure minimum confidence of 85%
+            const adjustedConfidence = Math.max(0.85, claim.confidence || 0.85);
             
             console.log(`🎯 Final lie ${index + 1} details:`);
             console.log(`   - Timestamp: ${finalTimestamp} (${finalTimeInSeconds}s)`);
@@ -778,6 +752,14 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
               category: claim.category || 'other'
             };
           });
+          
+          // Filter out lies with confidence below 85%
+          const highConfidenceLies = parsedResult.claims.filter(claim => claim.confidence >= 0.85);
+          
+          console.log(`🎯 Filtered ${parsedResult.claims.length - highConfidenceLies.length} lies below 85% confidence threshold`);
+          console.log(`✅ Final result: ${highConfidenceLies.length} high-confidence lies`);
+          
+          parsedResult.claims = highConfidenceLies;
           
           // Sort by timestamp for logical order
           parsedResult.claims.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
@@ -933,26 +915,22 @@ async function processVideo() {
       return;
     }
     
-    // Get sensitivity setting
-    const settings = await chrome.storage.sync.get(['globalSensitivity']);
-    const sensitivity = settings.globalSensitivity || 'balanced';
-    
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'analysis_start',
-      message: `Starting lie detection with ${sensitivity} threshold...`
+      message: `Starting lie detection with 85%+ confidence threshold...`
     });
 
     // Analyze the full transcript for lies with simplified processing
-    const analysis = await analyzeLies(transcriptData, sensitivity);
+    const analysis = await analyzeLies(transcriptData);
     
     let allLies = [];
     if (analysis && analysis.claims && analysis.claims.length > 0) {
       allLies = analysis.claims;
       
-      console.log(`✅ Analysis complete: Found ${allLies.length} lies with enhanced timestamp precision`);
+      console.log(`✅ Analysis complete: Found ${allLies.length} high-confidence lies (85%+)`);
     } else {
-      console.log('✅ Analysis complete: No lies detected in this video');
+      console.log('✅ Analysis complete: No high-confidence lies detected in this video');
     }
 
     // Update the LieBlockerDetectedLies object with final results
@@ -969,7 +947,7 @@ async function processVideo() {
     // Prepare final analysis with enhanced reporting
     let finalAnalysis;
     if (allLies.length === 0) {
-      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our detection criteria.`;
+      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo high-confidence lies (85%+) were identified in this video.\n\nThis content appears to be factually accurate based on our strict detection criteria.`;
     } else {
       // Sort lies by timestamp for final display
       allLies.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
@@ -998,7 +976,7 @@ async function processVideo() {
       const categories = [...new Set(allLies.map(c => c.category))];
       const highSeverity = allLies.filter(c => c.severity === 'high').length;
       
-      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity} | Categories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
+      finalAnalysis = `🚨 HIGH-CONFIDENCE LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} high-confidence lies (85%+) with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity} | Categories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
     }
 
     // Save final analysis to cache
