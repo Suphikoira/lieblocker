@@ -2,15 +2,11 @@
 async function getTranscript() {
   const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
   if (!videoId) {
-    console.log('No video ID found');
     return null;
   }
 
   try {
-    console.log('🎬 Requesting transcript extraction for video:', videoId);
-    
     const currentUrl = window.location.href;
-    console.log('🌐 Fetching transcript for URL:', currentUrl);
     
     // Send request to background script to handle API call
     const response = await chrome.runtime.sendMessage({
@@ -21,12 +17,6 @@ async function getTranscript() {
     if (!response.success) {
       throw new Error(response.error);
     }
-    
-    console.log('✅ Transcript received from background script');
-    console.log(`✅ Successfully extracted ${response.data.length} transcript segments`);
-    
-    // Store transcript data for download feature
-    storeTranscriptForDownload(response.data, videoId);
     
     // Return the transcript segments directly since they already have timestamps
     return response.data;
@@ -43,72 +33,6 @@ async function getTranscript() {
     }
     return null;
   }
-}
-
-// Function to store transcript data for download feature
-function storeTranscriptForDownload(transcript, videoId) {
-  const formattedTranscript = transcript.map((segment, index) => {
-    const minutes = Math.floor(segment.start / 60);
-    const seconds = Math.floor(segment.start % 60);
-    const timestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-    
-    return {
-      index: index + 1,
-      timestamp: timestamp,
-      timeInSeconds: Math.round(segment.start),
-      duration: segment.duration ? Math.round(segment.duration) : null,
-      text: segment.text.trim()
-    };
-  });
-  
-  // Store in global object for download access
-  window.LieBlockerTranscriptData = {
-    videoId: videoId,
-    extractedAt: new Date().toISOString(),
-    totalSegments: transcript.length,
-    segments: formattedTranscript,
-    
-    // Helper functions for download
-    downloadJSON: function() {
-      const data = {
-        videoId: this.videoId,
-        extractedAt: this.extractedAt,
-        totalSegments: this.totalSegments,
-        segments: this.segments
-      };
-      
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `transcript-${this.videoId}-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    },
-    
-    downloadCSV: function() {
-      const csv = [
-        'Index,Timestamp,TimeInSeconds,Duration,Text',
-        ...this.segments.map(s => 
-          `${s.index},"${s.timestamp}",${s.timeInSeconds},${s.duration || ''},"${s.text.replace(/"/g, '""')}"`
-        )
-      ].join('\n');
-      
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `transcript-${this.videoId}-${new Date().toISOString().split('T')[0]}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
-  };
-  
-  console.log('📋 Transcript data stored for download. Access via window.LieBlockerTranscriptData');
 }
 
 // Function to prepare full transcript for analysis with configurable duration
@@ -133,9 +57,6 @@ async function prepareFullTranscript(transcript) {
   if (filteredTranscript.length === 0) {
     return null;
   }
-  
-  console.log(`📊 Preparing full transcript analysis for ${ANALYSIS_LIMIT_MINUTES} minutes`);
-  console.log(`📊 Processing ${filteredTranscript.length} transcript segments`);
   
   // Build the full text with precise timestamp mapping
   let fullText = '';
@@ -179,9 +100,6 @@ async function prepareFullTranscript(transcript) {
   const endMinutes = Math.floor(endTime / 60);
   const endSeconds = Math.floor(endTime % 60);
   
-  // Store analysis transcript data for download
-  storeAnalysisTranscriptForDownload(fullText, segmentTimestamps, timestampMap, `0:00 - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`);
-  
   return {
     text: fullText.trim(),
     startTime: startTime,
@@ -201,39 +119,6 @@ function formatSecondsToTimestamp(seconds) {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Function to store analysis transcript data for download
-function storeAnalysisTranscriptForDownload(fullText, segmentTimestamps, timestampMap, timeWindow) {
-  window.LieBlockerAnalysisData = {
-    fullText: fullText,
-    segmentTimestamps: segmentTimestamps,
-    timeWindow: timeWindow,
-    processedAt: new Date().toISOString(),
-    
-    downloadAnalysisData: function() {
-      const data = {
-        fullText: this.fullText,
-        segmentTimestamps: this.segmentTimestamps,
-        timeWindow: this.timeWindow,
-        processedAt: this.processedAt,
-        textLength: this.fullText.length,
-        totalSegments: this.segmentTimestamps.length
-      };
-      
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `analysis-data-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }
-  };
-  
-  console.log('📊 Analysis transcript data stored for download. Access via window.LieBlockerAnalysisData');
-}
-
 // Function to get cached analysis results
 async function getCachedAnalysis(videoId) {
   try {
@@ -246,8 +131,6 @@ async function getCachedAnalysis(videoId) {
       const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
       
       if (cacheAge < maxAge) {
-        console.log('📋 Found cached analysis for video:', videoId);
-        
         // Create LieBlockerDetectedLies object from cached data
         if (cached.claims && cached.claims.length > 0) {
           storeDetectedLiesForDownload(cached.claims, videoId);
@@ -255,7 +138,6 @@ async function getCachedAnalysis(videoId) {
         
         return cached;
       } else {
-        console.log('⏰ Cached analysis expired for video:', videoId);
         // Remove expired cache
         chrome.storage.local.remove(`analysis_${videoId}`);
       }
@@ -284,9 +166,6 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     await chrome.storage.local.set({
       [`analysis_${videoId}`]: cacheData
     });
-    
-    console.log('💾 Analysis saved to cache for video:', videoId);
-    console.log('💾 Total lies saved:', cacheData.claims.length);
     
     // Store detected lies for download
     storeDetectedLiesForDownload(lies, videoId);
@@ -365,8 +244,6 @@ function storeDetectedLiesForDownload(lies, videoId) {
       return this.lies.filter(lie => (lie.confidence || 0) >= threshold);
     }
   };
-  
-  console.log('🚨 Detected lies data stored for download. Access via window.LieBlockerDetectedLies');
 }
 
 // Function to clean old cache entries (keep only last 50 analyses)
@@ -385,7 +262,6 @@ async function cleanOldCache() {
       
       if (keysToRemove.length > 0) {
         await chrome.storage.local.remove(keysToRemove);
-        console.log(`🧹 Cleaned ${keysToRemove.length} old cache entries`);
       }
     }
   } catch (error) {
@@ -542,9 +418,6 @@ async function analyzeLies(transcriptData) {
       return null;
     }
 
-    console.log('Time window:', transcriptData.timeWindow);
-    console.log(`Using ${provider} model:`, model);
-    
     const systemPrompt = buildSystemPrompt(transcriptData.analysisDuration);
     
     // Create a structured transcript with clear timestamps for the AI
@@ -584,7 +457,7 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
             role: "user",
             content: userContent
           }],
-          temperature: 0.2, // Slightly higher for better detection
+          temperature: 0.2,
           max_tokens: 2000
         })
       });
@@ -630,8 +503,18 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
     
     // Enhanced JSON parsing with better error handling
     try {
+      // Clean the content to ensure valid JSON
+      let cleanContent = content.trim();
+      
+      // Remove any markdown code blocks
+      cleanContent = cleanContent.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+      
+      // Fix common JSON issues
+      cleanContent = cleanContent.replace(/\\"/g, '"'); // Fix escaped quotes
+      cleanContent = cleanContent.replace(/"\s*:\s*"/g, '": "'); // Fix spacing around colons
+      
       // Try to extract JSON from the response
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsedResult = JSON.parse(jsonMatch[0]);
         
@@ -977,7 +860,6 @@ function jumpToVideoTimestamp(seconds) {
       url.searchParams.set('t', Math.floor(targetTime) + 's');
       window.history.replaceState({}, '', url.toString());
       
-      console.log(`🎯 Jumped to ${targetTime} seconds`);
       return true;
     }
     console.error('Video element not found');
@@ -1002,18 +884,15 @@ function createLieId(lie) {
 // Enhanced function to start skip mode monitoring
 function startSkipModeMonitoring() {
   if (skipModeActive) {
-    console.log('⏭️ Skip mode already active');
     return;
   }
   
   if (!currentVideoLies || currentVideoLies.length === 0) {
-    console.log('⏭️ No lies to monitor for skipping');
     return;
   }
   
   skipModeActive = true;
   skippedLiesInSession.clear();
-  console.log('🚀 Skip mode monitoring started with', currentVideoLies.length, 'lies to monitor');
   
   if (skipModeInterval) {
     clearInterval(skipModeInterval);
@@ -1031,7 +910,6 @@ function stopSkipModeMonitoring() {
   }
   
   skipModeActive = false;
-  console.log('⏹️ Skip mode monitoring stopped');
   
   if (skipModeInterval) {
     clearInterval(skipModeInterval);
@@ -1065,8 +943,6 @@ function checkAndSkipLies() {
           continue;
         }
         
-        console.log(`⏭️ SKIPPING lie at ${lie.timestamp}`);
-        
         skippedLiesInSession.add(lieId);
         
         const skipToTime = lieEnd + 1;
@@ -1077,8 +953,6 @@ function checkAndSkipLies() {
         window.history.replaceState({}, '', url.toString());
         
         showSkipNotification(lie, lieDuration);
-        
-        console.log(`✅ Skipped to ${skipToTime}s (after ${lieDuration}s lie)`);
         
         break;
       }
@@ -1164,8 +1038,6 @@ function showSkipNotification(lie, duration) {
 
 // Function to handle detection mode updates
 function updateDetectionMode(mode) {
-  console.log('🔧 Detection mode updated to:', mode);
-  
   if (mode === 'skip') {
     if (currentVideoLies && currentVideoLies.length > 0) {
       startSkipModeMonitoring();
@@ -1214,15 +1086,12 @@ function handlePageNavigation() {
   const currentVideoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
   
   if (currentVideoId !== lastVideoId) {
-    console.log('🔄 New video detected, resetting skip mode state');
     stopSkipModeMonitoring();
     currentVideoLies = [];
     skippedLiesInSession.clear();
     lastVideoId = currentVideoId;
     
     // Clear previous video data objects
-    window.LieBlockerTranscriptData = null;
-    window.LieBlockerAnalysisData = null;
     window.LieBlockerDetectedLies = null;
   }
 }
