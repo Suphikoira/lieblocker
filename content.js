@@ -317,9 +317,6 @@ function storeDetectedLiesForDownload(lies, videoId) {
     ? lies.reduce((sum, l) => sum + (l.confidence || 0), 0) / lies.length 
     : 0;
   
-  // Get unique categories
-  const categories = [...new Set(lies.map(l => l.category || 'other'))];
-  
   window.LieBlockerDetectedLies = {
     videoId: videoId,
     detectedAt: new Date().toISOString(),
@@ -327,7 +324,6 @@ function storeDetectedLiesForDownload(lies, videoId) {
     lies: lies,
     summary: {
       severityBreakdown: severityBreakdown,
-      categories: categories,
       averageConfidence: averageConfidence
     },
     
@@ -354,8 +350,6 @@ function storeDetectedLiesForDownload(lies, videoId) {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      
-      console.log('📥 Downloaded lies data:', data);
     },
     
     // Helper methods for console access
@@ -367,20 +361,12 @@ function storeDetectedLiesForDownload(lies, videoId) {
       return this.lies.filter(lie => lie.severity === severity);
     },
     
-    getLiesByCategory: function(category) {
-      return this.lies.filter(lie => lie.category === category);
-    },
-    
     getHighConfidenceLies: function(threshold = 0.8) {
       return this.lies.filter(lie => (lie.confidence || 0) >= threshold);
     }
   };
   
   console.log('🚨 Detected lies data stored for download. Access via window.LieBlockerDetectedLies');
-  console.log(`🚨 Total lies: ${lies.length}`);
-  console.log(`🚨 Severity breakdown:`, severityBreakdown);
-  console.log(`🚨 Categories:`, categories);
-  console.log(`🚨 Average confidence: ${Math.round(averageConfidence * 100)}%`);
 }
 
 // Function to clean old cache entries (keep only last 50 analyses)
@@ -452,7 +438,6 @@ Respond with a JSON object containing an array of claims. Each claim should have
 - "explanation": Why this claim is problematic (1-2 sentences)
 - "confidence": Your confidence level (0.0-1.0)
 - "severity": "low", "medium", or "high"
-- "category": Type of misinformation (e.g., "health", "science", "politics", "conspiracy")
 
 Example response:
 {
@@ -464,8 +449,7 @@ Example response:
       "claim": "Vaccines contain microchips",
       "explanation": "This is a debunked conspiracy theory with no scientific evidence.",
       "confidence": 0.95,
-      "severity": "high",
-      "category": "health"
+      "severity": "high"
     }
   ]
 }
@@ -475,8 +459,6 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
 
 // Enhanced function to find precise timestamp for a claim using improved text matching
 function findClaimTimestamp(claim, transcriptData) {
-  console.log(`🔍 Finding precise timestamp for claim: "${claim}"`);
-  
   // Clean and normalize the claim text for better matching
   const normalizedClaim = claim.toLowerCase()
     .replace(/[^\w\s]/g, ' ')
@@ -498,7 +480,6 @@ function findClaimTimestamp(claim, transcriptData) {
     // Check for exact phrase match (highest priority)
     if (segmentText.includes(normalizedClaim)) {
       score = 100;
-      console.log(`🎯 Found exact phrase match in segment at ${segment.timestamp}s`);
     } else {
       // Check for partial matches with individual words
       for (const word of claimWords) {
@@ -522,10 +503,8 @@ function findClaimTimestamp(claim, transcriptData) {
   }
   
   if (bestMatch && bestScore > 10) {
-    console.log(`🎯 Best match found: "${bestMatch.text.substring(0, 50)}..." at ${bestMatch.timestamp}s (score: ${bestScore})`);
     return Math.round(bestMatch.timestamp);
   } else {
-    console.log(`⚠️ No good match found (score: ${bestScore}), using transcript start`);
     return Math.round(transcriptData.startTime);
   }
 }
@@ -563,7 +542,6 @@ async function analyzeLies(transcriptData) {
       return null;
     }
 
-    console.log('Analyzing lies with high confidence threshold (85%+)');
     console.log('Time window:', transcriptData.timeWindow);
     console.log(`Using ${provider} model:`, model);
     
@@ -650,8 +628,6 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
       content = data.candidates[0].content.parts[0].text;
     }
     
-    console.log('🤖 AI Response:', content);
-    
     // Enhanced JSON parsing with better error handling
     try {
       // Try to extract JSON from the response
@@ -661,14 +637,10 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
         
         // Enhanced post-processing for accurate timestamps and durations
         if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
-          console.log(`🔍 Processing ${parsedResult.claims.length} detected lies for timestamp accuracy`);
-          
           parsedResult.claims = parsedResult.claims.map((claim, index) => {
             let finalTimeInSeconds;
             let finalTimestamp;
             let finalDuration = claim.duration || 12; // Default 12 seconds
-            
-            console.log(`\n🎯 Processing lie ${index + 1}: "${claim.claim}"`);
             
             // Parse the timestamp from the AI response
             if (claim.timestamp && typeof claim.timestamp === 'string') {
@@ -678,19 +650,14 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
                 const seconds = parseInt(timestampParts[1], 10);
                 finalTimeInSeconds = minutes * 60 + seconds;
                 finalTimestamp = claim.timestamp;
-                
-                console.log(`✅ Using AI timestamp: ${finalTimestamp} (${finalTimeInSeconds}s)`);
               } else {
-                console.log(`🔍 Invalid timestamp format, finding precise match...`);
                 finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData);
                 finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
               }
             } else if (claim.timeInSeconds && !isNaN(claim.timeInSeconds)) {
               finalTimeInSeconds = Math.round(claim.timeInSeconds);
               finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
-              console.log(`✅ Using AI timeInSeconds: ${finalTimestamp} (${finalTimeInSeconds}s)`);
             } else {
-              console.log(`🔍 No valid timestamp provided, finding precise match...`);
               finalTimeInSeconds = findClaimTimestamp(claim.claim, transcriptData);
               finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
             }
@@ -703,7 +670,6 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
             if (claim.duration && claim.duration >= 5 && claim.duration <= 30) {
               // Use AI-provided duration if it's reasonable
               finalDuration = Math.round(claim.duration);
-              console.log(`✅ Using AI-provided duration: ${finalDuration}s`);
             } else {
               // Estimate duration based on claim length and complexity
               const claimLength = claim.claim.length;
@@ -726,21 +692,10 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
               
               // Ensure bounds
               finalDuration = Math.max(5, Math.min(finalDuration, 30));
-              
-              console.log(`📏 Estimated duration based on complexity: ${finalDuration}s (${claimLength} chars, ${wordCount} words)`);
             }
             
             // Ensure minimum confidence of 85%
             const adjustedConfidence = Math.max(0.85, claim.confidence || 0.85);
-            
-            console.log(`🎯 Final lie ${index + 1} details:`);
-            console.log(`   - Timestamp: ${finalTimestamp} (${finalTimeInSeconds}s)`);
-            console.log(`   - Duration: ${finalDuration}s`);
-            console.log(`   - Confidence: ${Math.round(adjustedConfidence * 100)}%`);
-            console.log(`   - Severity: ${claim.severity || 'medium'}`);
-            console.log(`   - Category: ${claim.category || 'other'}`);
-            console.log(`   - Claim length: ${claim.claim.length} chars, ${claim.claim.split(/\s+/).length} words`);
-            console.log(`   - Claim: "${claim.claim.substring(0, 100)}..."`);
             
             return {
               ...claim,
@@ -748,16 +703,12 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
               timeInSeconds: finalTimeInSeconds,
               duration: finalDuration,
               confidence: adjustedConfidence,
-              severity: claim.severity || 'medium',
-              category: claim.category || 'other'
+              severity: claim.severity || 'medium'
             };
           });
           
           // Filter out lies with confidence below 85%
           const highConfidenceLies = parsedResult.claims.filter(claim => claim.confidence >= 0.85);
-          
-          console.log(`🎯 Filtered ${parsedResult.claims.length - highConfidenceLies.length} lies below 85% confidence threshold`);
-          console.log(`✅ Final result: ${highConfidenceLies.length} high-confidence lies`);
           
           parsedResult.claims = highConfidenceLies;
           
@@ -927,10 +878,6 @@ async function processVideo() {
     let allLies = [];
     if (analysis && analysis.claims && analysis.claims.length > 0) {
       allLies = analysis.claims;
-      
-      console.log(`✅ Analysis complete: Found ${allLies.length} high-confidence lies (85%+)`);
-    } else {
-      console.log('✅ Analysis complete: No high-confidence lies detected in this video');
     }
 
     // Update the LieBlockerDetectedLies object with final results
@@ -947,36 +894,25 @@ async function processVideo() {
     // Prepare final analysis with enhanced reporting
     let finalAnalysis;
     if (allLies.length === 0) {
-      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo high-confidence lies (85%+) were identified in this video.\n\nThis content appears to be factually accurate based on our strict detection criteria.`;
+      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies detected in this video.\n\nThis content appears to be factually accurate based on our strict detection criteria.`;
     } else {
       // Sort lies by timestamp for final display
       allLies.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
       
       const liesText = allLies.map((claim, index) => {
-        const categoryEmoji = {
-          health: '🏥',
-          science: '🔬',
-          financial: '💰',
-          political: '🏛️',
-          safety: '⚠️',
-          conspiracy: '🕳️',
-          other: '🚨'
-        };
-        
         const severityEmoji = {
           low: '🟡',
           medium: '🟠',
           high: '🔴'
         };
         
-        return `${index + 1}. ${categoryEmoji[claim.category] || '🚨'} ${severityEmoji[claim.severity] || '🟠'} ${claim.timestamp} (${claim.duration}s)\n🚫 Lie: ${claim.claim}\n🎯 Confidence: ${Math.round(claim.confidence * 100)}%\n💡 ${claim.explanation}`;
+        return `${index + 1}. ${severityEmoji[claim.severity] || '🟠'} ${claim.timestamp} (${claim.duration}s)\n🚫 Lie: ${claim.claim}\n🎯 Confidence: ${Math.round(claim.confidence * 100)}%\n💡 ${claim.explanation}`;
       }).join('\n\n');
       
       const avgConfidence = Math.round(allLies.reduce((sum, c) => sum + c.confidence, 0) / allLies.length * 100);
-      const categories = [...new Set(allLies.map(c => c.category))];
       const highSeverity = allLies.filter(c => c.severity === 'high').length;
       
-      finalAnalysis = `🚨 HIGH-CONFIDENCE LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} high-confidence lies (85%+) with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity} | Categories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
+      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
     }
 
     // Save final analysis to cache
@@ -1130,12 +1066,6 @@ function checkAndSkipLies() {
         }
         
         console.log(`⏭️ SKIPPING lie at ${lie.timestamp}`);
-        console.log(`⏭️ Lie details:`);
-        console.log(`   - Start: ${lieStart}s (${lie.timestamp})`);
-        console.log(`   - Duration: ${lieDuration}s`);
-        console.log(`   - End: ${lieEnd}s`);
-        console.log(`   - Current time: ${currentTime.toFixed(1)}s`);
-        console.log(`   - Claim: "${lie.claim}"`);
         
         skippedLiesInSession.add(lieId);
         
