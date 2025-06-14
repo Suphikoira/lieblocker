@@ -1,32 +1,12 @@
 {
-  "name": "lieblocker-backend",
+  "name": "lieblocker-extension",
   "version": "1.0.0",
-  "description": "Supabase backend for LieBlocker extension with shared lie detection",
+  "description": "AI-powered fact-checking for YouTube videos",
   "main": "index.js",
-  "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "db:start": "supabase start",
-    "db:stop": "supabase stop",
-    "db:reset": "supabase db reset",
-    "db:migrate": "supabase db push",
-    "db:types": "supabase gen types typescript --local > src/types/database.types.ts",
-    "functions:serve": "supabase functions serve",
-    "functions:deploy": "supabase functions deploy"
+    "dev": "echo 'Chrome extension - load unpacked in browser'",
+    "build": "echo 'Chrome extension - no build needed'"
   },
-  "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "cors": "^2.8.5",
-    "express": "^4.18.2"
-  },
-  "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.10.0",
-    "supabase": "^1.142.2",
-    "typescript": "^5.3.0",
-    "vite": "^5.0.0"
-  }
+  "dependencies": {},
+  "devDependencies": {}
 }

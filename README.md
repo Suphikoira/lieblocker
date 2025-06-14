@@ -1,246 +1,82 @@
-# LieBlocker Backend - Supabase Integration
+# LieBlocker - AI-Powered YouTube Fact Checker
 
-This is the Supabase backend for the LieBlocker Chrome extension, enabling shared lie detection data across users while maintaining privacy.
+A Chrome extension that automatically detects and skips lies in YouTube videos using AI analysis.
 
 ## Features
 
-- **Shared Lie Database**: Store and retrieve lie detection results across users
-- **User Contributions**: Track who contributed analysis and verification
-- **Lie Verification**: Community-driven verification of detected lies
-- **Privacy-First**: Users authenticate but analysis data is shared publicly
-- **Cost Tracking**: Track API costs for user contributions
+- **Real-time Lie Detection**: Analyzes video transcripts using OpenAI or Google Gemini
+- **Auto-Skip Mode**: Automatically jumps over detected lies while watching
+- **Visual Warnings**: Shows detected lies with timestamps and explanations
+- **Confidence Scoring**: Only shows lies with 85%+ confidence
+- **Local Caching**: Saves analysis results to avoid re-processing
+- **Customizable Settings**: Configure analysis duration, AI provider, and detection mode
 
-## Architecture
+## Installation
 
-### Database Schema
-
-1. **videos** - YouTube video metadata
-2. **video_analysis** - Analysis sessions with metadata
-3. **detected_lies** - Individual lies with timestamps and details
-4. **user_contributions** - Track user contributions and costs
-5. **lie_verifications** - Community verification of lies
-
-### Edge Functions
-
-1. **analyze-video** - Submit new video analysis results
-2. **get-video-lies** - Retrieve lies for a specific video
-3. **verify-lie** - Submit verification for a detected lie
+1. Download or clone this repository
+2. Open Chrome and go to `chrome://extensions/`
+3. Enable "Developer mode" in the top right
+4. Click "Load unpacked" and select the extension folder
+5. The LieBlocker icon will appear in your extensions toolbar
 
 ## Setup
 
-### Prerequisites
+1. Click the LieBlocker extension icon
+2. Go to Settings tab
+3. Add your API keys:
+   - **Supadata API Token**: For transcript extraction
+   - **AI API Key**: OpenAI or Google Gemini for lie detection
+4. Configure your preferences:
+   - Detection mode (visual warnings or auto-skip)
+   - Analysis duration (5-60 minutes)
+   - AI provider and model
 
-- [Supabase CLI](https://supabase.com/docs/guides/cli)
-- Node.js 18+
-- Chrome extension development environment
+## Usage
 
-### Local Development
+1. Navigate to any YouTube video
+2. Click the LieBlocker extension icon
+3. Click "Analyze Current Video"
+4. Wait for analysis to complete
+5. View detected lies in the "Lies" tab
+6. If auto-skip is enabled, lies will be automatically skipped during playback
 
-1. **Clone and install dependencies:**
-```bash
-npm install
-```
+## API Requirements
 
-2. **Start Supabase locally:**
-```bash
-supabase start
-```
+### Supadata API
+- Used for extracting YouTube video transcripts
+- Get your token at: https://supadata.ai
+- Supports multiple languages with English preference
 
-3. **Run database migrations:**
-```bash
-supabase db reset
-```
+### AI Provider (Choose One)
 
-4. **Generate TypeScript types:**
-```bash
-npm run db:types
-```
+**OpenAI:**
+- Models: GPT-4.1 Mini, GPT-4.1 Nano, o4-mini, GPT-4.1
+- Get API key at: https://platform.openai.com
 
-5. **Serve edge functions locally:**
-```bash
-npm run functions:serve
-```
-
-### Environment Setup
-
-1. **Copy environment template:**
-```bash
-cp .env.example .env
-```
-
-2. **Update environment variables:**
-```env
-VITE_SUPABASE_URL=http://127.0.0.1:54321
-VITE_SUPABASE_ANON_KEY=your_local_anon_key
-```
-
-### Production Deployment
-
-1. **Create Supabase project:**
-```bash
-supabase projects create lieblocker-backend
-```
-
-2. **Link to your project:**
-```bash
-supabase link --project-ref your-project-ref
-```
-
-3. **Deploy database:**
-```bash
-supabase db push
-```
-
-4. **Deploy edge functions:**
-```bash
-supabase functions deploy
-```
-
-5. **Update production environment variables in your extension**
-
-## Extension Integration
-
-The Chrome extension integrates with this backend through the following flow:
-
-### 1. Check for Existing Analysis
-```javascript
-// Check if video already has analysis
-const existingLies = await getVideoLies(videoId, 0.85)
-if (existingLies.hasAnalysis) {
-  // Use existing lies, skip analysis
-  return existingLies.lies
-}
-```
-
-### 2. Submit New Analysis
-```javascript
-// After performing AI analysis
-await submitVideoAnalysis(videoId, detectedLies, {
-  videoTitle: 'Video Title',
-  channelName: 'Channel Name',
-  analysisDuration: 20,
-  confidenceThreshold: 0.85,
-  userToken: userAuthToken
-})
-```
-
-### 3. Community Verification
-```javascript
-// Users can verify lies
-await verifyLie(lieId, 'confirmed', 'Additional notes', userAuthToken)
-```
-
-## Data Flow
-
-1. **User analyzes video** → Extension checks backend for existing analysis
-2. **No existing analysis** → Extension performs AI analysis using user's API keys
-3. **Analysis complete** → Extension submits results to backend
-4. **Other users watch same video** → Extension retrieves shared analysis
-5. **Community verification** → Users can verify/dispute detected lies
+**Google Gemini:**
+- Models: Gemini 2.0 Flash Experimental, Gemini 2.5 Flash, Gemini 1.5 Pro
+- Get API key at: https://makersuite.google.com
 
 ## Privacy & Security
 
-- **Public lie data**: All detected lies are publicly readable
-- **Private contributions**: User contribution tracking requires authentication
-- **No personal data**: Only user IDs and contribution metadata stored
-- **User API keys**: Never stored in backend, only used locally in extension
+- All processing happens locally in your browser
+- API keys are stored locally and never shared
+- No user data is collected or transmitted
+- Analysis results are cached locally for 24 hours
 
-## API Endpoints
+## Technical Details
 
-### GET /functions/v1/get-video-lies
-Retrieve lies for a specific video.
+- **Transcript Extraction**: Uses Supadata API with English language preference
+- **AI Analysis**: Configurable confidence threshold (85%+ default)
+- **Timestamp Precision**: Maps lies to exact video timestamps
+- **Skip Logic**: Intelligent skipping with visual notifications
+- **Cache Management**: Automatic cleanup of old analysis data
 
-**Parameters:**
-- `videoId` (required): YouTube video ID
-- `minConfidence` (optional): Minimum confidence threshold (default: 0.85)
+## Supported Browsers
 
-**Response:**
-```json
-{
-  "videoId": "dQw4w9WgXcQ",
-  "hasAnalysis": true,
-  "lies": [...],
-  "totalLies": 5,
-  "analysis": {...},
-  "video": {...}
-}
-```
-
-### POST /functions/v1/analyze-video
-Submit new video analysis results.
-
-**Headers:**
-- `Authorization: Bearer <user_token>`
-
-**Body:**
-```json
-{
-  "videoId": "dQw4w9WgXcQ",
-  "videoTitle": "Video Title",
-  "lies": [...],
-  "analysisDuration": 20,
-  "confidenceThreshold": 0.85
-}
-```
-
-### POST /functions/v1/verify-lie
-Submit verification for a detected lie.
-
-**Headers:**
-- `Authorization: Bearer <user_token>`
-
-**Body:**
-```json
-{
-  "lieId": "uuid",
-  "verificationType": "confirmed",
-  "notes": "Additional context"
-}
-```
-
-## Development
-
-### Database Changes
-
-1. **Create migration:**
-```bash
-supabase migration new your_migration_name
-```
-
-2. **Apply locally:**
-```bash
-supabase db reset
-```
-
-3. **Generate types:**
-```bash
-npm run db:types
-```
-
-### Function Development
-
-1. **Create new function:**
-```bash
-supabase functions new function-name
-```
-
-2. **Test locally:**
-```bash
-supabase functions serve
-```
-
-3. **Deploy:**
-```bash
-supabase functions deploy function-name
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test locally with Supabase
-5. Submit a pull request
+- Chrome (Manifest V3)
+- Edge (Chromium-based)
+- Other Chromium-based browsers
 
 ## License
 
