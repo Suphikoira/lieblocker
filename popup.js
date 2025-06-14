@@ -63,7 +63,7 @@ const progressStages = {
   cache_check: { icon: '🔍', message: 'Checking cache...', color: '#17a2b8' },
   cache_found: { icon: '📋', message: 'Loading cached results...', color: '#28a745' },
   transcript_extraction: { icon: '📝', message: 'Extracting transcript...', color: '#ffc107' },
-  transcript_preparation: { icon: '⚙️', message: 'Preparing transcript...', color: '#fd7e14' },
+  transcript_preparation: { icon: '⚙️', message: 'Preparing analysis...', color: '#fd7e14' },
   analysis_start: { icon: '🚨', message: 'Starting analysis...', color: '#dc3545' },
   ai_processing: { icon: '🤖', message: 'Processing...', color: '#6f42c1' },
   ai_request: { icon: '📡', message: 'Sending to AI...', color: '#e83e8c' },
@@ -92,6 +92,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupEventListeners();
     setupRealTimeUpdates();
     setupDownloadLinks();
+    setupAnalysisDurationSlider();
     
     // Hide loading state
     hideLoadingState();
@@ -152,10 +153,30 @@ function setupTabNavigation() {
   });
 }
 
+function setupAnalysisDurationSlider() {
+  const durationSlider = document.getElementById('analysis-duration');
+  const durationDisplay = document.getElementById('duration-display');
+  
+  if (durationSlider && durationDisplay) {
+    // Update display when slider changes
+    durationSlider.addEventListener('input', (e) => {
+      const minutes = parseInt(e.target.value);
+      durationDisplay.textContent = `${minutes} min`;
+    });
+    
+    // Save setting when slider changes
+    durationSlider.addEventListener('change', async (e) => {
+      const minutes = parseInt(e.target.value);
+      await chrome.storage.sync.set({ analysisDuration: minutes });
+      showNotification(`Analysis duration set to ${minutes} minutes`, 'success');
+    });
+  }
+}
+
 async function loadSettings() {
   try {
     const settings = await chrome.storage.sync.get([
-      'detectionMode', 'globalSensitivity', 'aiProvider', 'openaiModel', 'geminiModel'
+      'detectionMode', 'globalSensitivity', 'aiProvider', 'openaiModel', 'geminiModel', 'analysisDuration'
     ]);
     
     // Update UI elements
@@ -167,6 +188,15 @@ async function loadSettings() {
     const globalSensitivitySelect = document.getElementById('global-sensitivity');
     if (globalSensitivitySelect && settings.globalSensitivity) {
       globalSensitivitySelect.value = settings.globalSensitivity;
+    }
+    
+    // Load analysis duration setting
+    const analysisDurationSlider = document.getElementById('analysis-duration');
+    const durationDisplay = document.getElementById('duration-display');
+    if (analysisDurationSlider && durationDisplay) {
+      const duration = settings.analysisDuration || 20; // Default to 20 minutes
+      analysisDurationSlider.value = duration;
+      durationDisplay.textContent = `${duration} min`;
     }
     
     // Load AI provider selection
@@ -350,11 +380,20 @@ async function loadStats() {
       timeSaved: 0
     };
     
-    // Update UI immediately
+    // Update UI immediately with proper time formatting
     updateStatElement('videos-analyzed', sessionStats.videosAnalyzed);
     updateStatElement('lies-detected', sessionStats.liesDetected);
     updateStatElement('high-severity', sessionStats.highSeverity);
-    updateStatElement('time-saved', `${sessionStats.timeSaved}m`);
+    
+    // Format time saved properly
+    const timeSaved = sessionStats.timeSaved || 0;
+    if (timeSaved >= 60) {
+      const minutes = Math.floor(timeSaved / 60);
+      const seconds = timeSaved % 60;
+      updateStatElement('time-saved', seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`);
+    } else {
+      updateStatElement('time-saved', `${timeSaved}s`);
+    }
     
     currentStats = sessionStats;
     
@@ -365,7 +404,7 @@ async function loadStats() {
     updateStatElement('videos-analyzed', 0);
     updateStatElement('lies-detected', 0);
     updateStatElement('high-severity', 0);
-    updateStatElement('time-saved', '0m');
+    updateStatElement('time-saved', '0s');
     return false;
   }
 }
@@ -1174,7 +1213,7 @@ async function clearCache() {
       updateStatElement('videos-analyzed', 0);
       updateStatElement('lies-detected', 0);
       updateStatElement('high-severity', 0);
-      updateStatElement('time-saved', '0m');
+      updateStatElement('time-saved', '0s');
       updateFeedbackUI();
       
       // Clear lies tab
@@ -1476,7 +1515,7 @@ function handleLiesUpdate(message) {
     isAnalysisRunning = false;
     resetAnalysisUI();
     updateProgressIndicator('complete', `Full video analysis complete - ${currentVideoLies.length} lies found`);
-    showNotification(`✅ Full video analysis complete! Found ${currentVideoLies.length} lies in 20 minutes.`, 'success', 5000);
+    showNotification(`✅ Full video analysis complete! Found ${currentVideoLies.length} lies.`, 'success', 5000);
     
     // Update download links availability after analysis is complete
     setTimeout(() => {

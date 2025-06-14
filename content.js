@@ -111,9 +111,11 @@ function storeTranscriptForDownload(transcript, videoId) {
   console.log('📋 Transcript data stored for download. Access via window.LieBlockerTranscriptData');
 }
 
-// Function to prepare full transcript for analysis (limited to 20 minutes)
-function prepareFullTranscript(transcript) {
-  const DEMO_LIMIT_MINUTES = 20; // DEMO LIMIT: Only analyze first 20 minutes
+// Function to prepare full transcript for analysis with configurable duration
+async function prepareFullTranscript(transcript) {
+  // Get user-configured analysis duration (default to 20 minutes)
+  const settings = await chrome.storage.sync.get(['analysisDuration']);
+  const ANALYSIS_LIMIT_MINUTES = settings.analysisDuration || 20;
   
   if (!transcript || transcript.length === 0) {
     return null;
@@ -122,8 +124,8 @@ function prepareFullTranscript(transcript) {
   // Sort transcript by start time to ensure proper ordering
   const sortedTranscript = [...transcript].sort((a, b) => a.start - b.start);
   
-  // Apply demo limit - only analyze first 20 minutes
-  const limitedDuration = DEMO_LIMIT_MINUTES * 60; // 20 minutes in seconds
+  // Apply user-configured limit
+  const limitedDuration = ANALYSIS_LIMIT_MINUTES * 60; // Convert minutes to seconds
   const filteredTranscript = sortedTranscript.filter(segment => 
     segment.start < limitedDuration
   );
@@ -132,7 +134,7 @@ function prepareFullTranscript(transcript) {
     return null;
   }
   
-  console.log(`📊 Preparing full transcript analysis for ${DEMO_LIMIT_MINUTES} minutes`);
+  console.log(`📊 Preparing full transcript analysis for ${ANALYSIS_LIMIT_MINUTES} minutes`);
   console.log(`📊 Processing ${filteredTranscript.length} transcript segments`);
   
   // Build the full text with precise timestamp mapping
@@ -187,7 +189,8 @@ function prepareFullTranscript(transcript) {
     segmentTimestamps: segmentTimestamps,
     timestampMap: timestampMap,
     timeWindow: `0:00 - ${endMinutes}:${endSeconds.toString().padStart(2, '0')}`,
-    totalSegments: filteredTranscript.length
+    totalSegments: filteredTranscript.length,
+    analysisDuration: ANALYSIS_LIMIT_MINUTES
   };
 }
 
@@ -404,8 +407,8 @@ async function cleanOldCache() {
   }
 }
 
-// Simplified system prompt function with improved lie detection criteria
-function buildSystemPrompt(sensitivity) {
+// Simplified system prompt function with improved lie detection criteria and configurable duration
+function buildSystemPrompt(sensitivity, analysisDuration) {
   const baseSensitivity = {
     conservative: {
       threshold: 'very high confidence (90%+)',
@@ -423,7 +426,7 @@ function buildSystemPrompt(sensitivity) {
 
   const config = baseSensitivity[sensitivity] || baseSensitivity.balanced;
 
-  return `You are a fact-checking expert. Analyze this 20-minute YouTube transcript and identify false or misleading claims.
+  return `You are a fact-checking expert. Analyze this ${analysisDuration}-minute YouTube transcript and identify false or misleading claims.
 
 DETECTION CRITERIA:
 - Only flag factual claims, not opinions or predictions
@@ -449,18 +452,19 @@ TIMESTAMP INSTRUCTIONS:
 - Timestamps should be in MM:SS format (e.g., "2:34")
 
 DURATION ESTIMATION:
-- Estimate how long each lie takes to be fully stated
-- Consider the complexity and length of the false claim
+- Estimate how long each lie takes to be fully stated based on the claim's complexity
+- Consider the actual length and complexity of the false statement
 - Simple false statements: 5-10 seconds
 - Complex lies with elaboration: 10-20 seconds
 - Extended false narratives: 15-30 seconds
 - Maximum duration: 30 seconds
+- Base your estimate on the actual content and speaking pace
 
 RESPONSE FORMAT:
 Respond with a JSON object containing an array of claims. Each claim should have:
 - "timestamp": The exact timestamp from the transcript (e.g., "2:34")
 - "timeInSeconds": Timestamp converted to seconds (e.g., 154)
-- "duration": Estimated duration of the lie in seconds (5-30)
+- "duration": Estimated duration of the lie in seconds (5-30, based on actual complexity)
 - "claim": The specific false or misleading statement (exact quote from transcript)
 - "explanation": Why this claim is problematic (1-2 sentences)
 - "confidence": Your confidence level (0.0-1.0)
@@ -543,7 +547,7 @@ function findClaimTimestamp(claim, transcriptData) {
   }
 }
 
-// Function to analyze lies in full transcript with simplified processing
+// Function to analyze lies in full transcript with simplified processing and configurable duration
 async function analyzeLies(transcriptData, sensitivity = 'balanced') {
   try {
     // Send progress update
@@ -580,7 +584,7 @@ async function analyzeLies(transcriptData, sensitivity = 'balanced') {
     console.log('Time window:', transcriptData.timeWindow);
     console.log(`Using ${provider} model:`, model);
     
-    const systemPrompt = buildSystemPrompt(sensitivity);
+    const systemPrompt = buildSystemPrompt(sensitivity, transcriptData.analysisDuration);
     
     // Create a structured transcript with clear timestamps for the AI
     const structuredTranscript = transcriptData.segmentTimestamps.map(segment => {
@@ -712,10 +716,11 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
             finalTimeInSeconds = Math.max(transcriptData.startTime, Math.min(finalTimeInSeconds, transcriptData.endTime));
             finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
             
-            // Enhanced duration estimation based on claim complexity
+            // Enhanced duration estimation based on claim complexity and AI suggestion
             if (claim.duration && claim.duration >= 5 && claim.duration <= 30) {
               // Use AI-provided duration if it's reasonable
               finalDuration = Math.round(claim.duration);
+              console.log(`✅ Using AI-provided duration: ${finalDuration}s`);
             } else {
               // Estimate duration based on claim length and complexity
               const claimLength = claim.claim.length;
@@ -738,6 +743,8 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
               
               // Ensure bounds
               finalDuration = Math.max(5, Math.min(finalDuration, 30));
+              
+              console.log(`📏 Estimated duration based on complexity: ${finalDuration}s (${claimLength} chars, ${wordCount} words)`);
             }
             
             // Ensure minimum confidence based on sensitivity
@@ -754,7 +761,7 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
             
             console.log(`🎯 Final lie ${index + 1} details:`);
             console.log(`   - Timestamp: ${finalTimestamp} (${finalTimeInSeconds}s)`);
-            console.log(`   - Duration: ${finalDuration}s (estimated from claim complexity)`);
+            console.log(`   - Duration: ${finalDuration}s`);
             console.log(`   - Confidence: ${Math.round(adjustedConfidence * 100)}%`);
             console.log(`   - Severity: ${claim.severity || 'medium'}`);
             console.log(`   - Category: ${claim.category || 'other'}`);
@@ -801,7 +808,7 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
   }
 }
 
-// Function to update session stats
+// Function to update session stats with improved time saved calculation
 async function updateSessionStats(newLies = []) {
   try {
     const stats = await chrome.storage.local.get(['sessionStats']);
@@ -815,7 +822,13 @@ async function updateSessionStats(newLies = []) {
     currentStats.videosAnalyzed += 1;
     currentStats.liesDetected += newLies.length;
     currentStats.highSeverity += newLies.filter(c => c.severity === 'high').length;
-    currentStats.timeSaved += Math.floor(newLies.length * 0.5); // Estimate time saved
+    
+    // Calculate actual time saved based on lie durations
+    const actualTimeSaved = newLies.reduce((total, lie) => {
+      return total + (lie.duration || 10); // Use actual duration or default to 10 seconds
+    }, 0);
+    
+    currentStats.timeSaved += actualTimeSaved;
     
     await chrome.storage.local.set({ sessionStats: currentStats });
     
@@ -879,7 +892,7 @@ async function processVideo() {
         }
       }
       
-      // Display cached results
+      // Display cache results
       chrome.runtime.sendMessage({
         type: 'analysisResult',
         data: cachedAnalysis.analysis + '\n\nAnalysis loaded from cache!'
@@ -910,7 +923,7 @@ async function processVideo() {
     });
 
     // Prepare full transcript for analysis with enhanced timestamp mapping
-    const transcriptData = prepareFullTranscript(transcript);
+    const transcriptData = await prepareFullTranscript(transcript);
     
     if (!transcriptData) {
       chrome.runtime.sendMessage({
@@ -956,7 +969,7 @@ async function processVideo() {
     // Prepare final analysis with enhanced reporting
     let finalAnalysis;
     if (allLies.length === 0) {
-      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our detection criteria.`;
+      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies were identified in this video.\n\nThis content appears to be factually accurate based on our detection criteria.`;
     } else {
       // Sort lies by timestamp for final display
       allLies.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
@@ -985,13 +998,13 @@ async function processVideo() {
       const categories = [...new Set(allLies.map(c => c.category))];
       const highSeverity = allLies.filter(c => c.severity === 'high').length;
       
-      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed 20 minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity} | Categories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
+      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity} | Categories: ${categories.join(', ')}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
     }
 
     // Save final analysis to cache
     await saveAnalysisToCache(videoId, finalAnalysis, allLies);
     
-    // Update session stats
+    // Update session stats with improved time calculation
     await updateSessionStats(allLies);
     
     // Clean old cache entries
