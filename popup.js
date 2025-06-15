@@ -1,9 +1,8 @@
-// Enhanced popup script with Supabase integration and comprehensive functionality
+// Enhanced popup script with Supadata API integration
 document.addEventListener('DOMContentLoaded', function() {
   // Initialize all components
   initializeTabs();
   initializeSettings();
-  initializeSupabaseConfig();
   initializeAnalysisFeatures();
   initializeSessionStats();
   loadCurrentLies();
@@ -35,195 +34,6 @@ function initializeTabs() {
       });
     });
   });
-}
-
-// Supabase Configuration Management
-function initializeSupabaseConfig() {
-  const urlInput = document.getElementById('supabase-url');
-  const keyInput = document.getElementById('supabase-anon-key');
-  const testButton = document.getElementById('test-supabase-connection');
-  const clearButton = document.getElementById('clear-supabase-config');
-  const statusDot = document.getElementById('supabase-status-dot');
-  const statusText = document.getElementById('supabase-status-text');
-  
-  // Load existing configuration
-  loadSupabaseConfig();
-  
-  // Save configuration on input change
-  urlInput.addEventListener('input', debounce(saveSupabaseConfig, 500));
-  keyInput.addEventListener('input', debounce(saveSupabaseConfig, 500));
-  
-  // Test connection button
-  testButton.addEventListener('click', testSupabaseConnection);
-  
-  // Clear configuration button
-  clearButton.addEventListener('click', clearSupabaseConfig);
-  
-  // Initial status check
-  updateSupabaseStatus();
-}
-
-async function loadSupabaseConfig() {
-  try {
-    const settings = await chrome.storage.sync.get(['supabaseUrl', 'supabaseAnonKey']);
-    
-    if (settings.supabaseUrl) {
-      document.getElementById('supabase-url').value = settings.supabaseUrl;
-    }
-    
-    if (settings.supabaseAnonKey) {
-      document.getElementById('supabase-anon-key').value = settings.supabaseAnonKey;
-    }
-    
-    updateSupabaseStatus();
-  } catch (error) {
-    console.error('Error loading Supabase config:', error);
-    showNotification('Error loading Supabase configuration', 'error');
-  }
-}
-
-async function saveSupabaseConfig() {
-  try {
-    const url = document.getElementById('supabase-url').value.trim();
-    const key = document.getElementById('supabase-anon-key').value.trim();
-    
-    // Validate URL format
-    if (url && !isValidSupabaseUrl(url)) {
-      showFieldError('supabase-url', 'Please enter a valid Supabase URL (https://your-project.supabase.co)');
-      return;
-    }
-    
-    // Clear previous errors
-    clearFieldError('supabase-url');
-    clearFieldError('supabase-anon-key');
-    
-    // Save to storage
-    await chrome.storage.sync.set({
-      supabaseUrl: url,
-      supabaseAnonKey: key
-    });
-    
-    if (url && key) {
-      showFieldSuccess('supabase-url', 'Configuration saved');
-      showFieldSuccess('supabase-anon-key', 'Key saved securely');
-    }
-    
-    updateSupabaseStatus();
-    
-  } catch (error) {
-    console.error('Error saving Supabase config:', error);
-    showNotification('Error saving Supabase configuration', 'error');
-  }
-}
-
-async function testSupabaseConnection() {
-  const testButton = document.getElementById('test-supabase-connection');
-  const statusDot = document.getElementById('supabase-status-dot');
-  const statusText = document.getElementById('supabase-status-text');
-  
-  try {
-    // Show loading state
-    testButton.textContent = 'Testing...';
-    testButton.disabled = true;
-    statusDot.className = 'status-indicator warning';
-    statusText.textContent = 'Testing connection...';
-    
-    // Get current configuration
-    const url = document.getElementById('supabase-url').value.trim();
-    const key = document.getElementById('supabase-anon-key').value.trim();
-    
-    if (!url || !key) {
-      throw new Error('Please enter both Supabase URL and Anon Key');
-    }
-    
-    if (!isValidSupabaseUrl(url)) {
-      throw new Error('Please enter a valid Supabase URL');
-    }
-    
-    // Test connection by calling a simple endpoint
-    const response = await fetch(`${url}/rest/v1/`, {
-      method: 'GET',
-      headers: {
-        'apikey': key,
-        'Authorization': `Bearer ${key}`,
-        'Content-Type': 'application/json'
-      }
-    });
-    
-    if (response.ok) {
-      // Connection successful
-      statusDot.className = 'status-indicator connected';
-      statusText.textContent = 'Connected successfully';
-      showNotification('Supabase connection successful!', 'success');
-      
-      // Save the working configuration
-      await saveSupabaseConfig();
-      
-    } else {
-      throw new Error(`Connection failed: ${response.status} ${response.statusText}`);
-    }
-    
-  } catch (error) {
-    console.error('Supabase connection test failed:', error);
-    
-    statusDot.className = 'status-indicator';
-    statusText.textContent = `Connection failed: ${error.message}`;
-    showNotification(`Connection failed: ${error.message}`, 'error');
-    
-  } finally {
-    // Reset button state
-    testButton.textContent = 'Test Connection';
-    testButton.disabled = false;
-  }
-}
-
-async function clearSupabaseConfig() {
-  try {
-    await chrome.storage.sync.remove(['supabaseUrl', 'supabaseAnonKey']);
-    
-    document.getElementById('supabase-url').value = '';
-    document.getElementById('supabase-anon-key').value = '';
-    
-    clearFieldError('supabase-url');
-    clearFieldError('supabase-anon-key');
-    clearFieldSuccess('supabase-url');
-    clearFieldSuccess('supabase-anon-key');
-    
-    updateSupabaseStatus();
-    
-    showNotification('Supabase configuration cleared', 'info');
-    
-  } catch (error) {
-    console.error('Error clearing Supabase config:', error);
-    showNotification('Error clearing configuration', 'error');
-  }
-}
-
-function updateSupabaseStatus() {
-  const statusDot = document.getElementById('supabase-status-dot');
-  const statusText = document.getElementById('supabase-status-text');
-  const url = document.getElementById('supabase-url').value.trim();
-  const key = document.getElementById('supabase-anon-key').value.trim();
-  
-  if (url && key && isValidSupabaseUrl(url)) {
-    statusDot.className = 'status-indicator warning';
-    statusText.textContent = 'Configured (click Test Connection to verify)';
-  } else if (url || key) {
-    statusDot.className = 'status-indicator warning';
-    statusText.textContent = 'Incomplete configuration';
-  } else {
-    statusDot.className = 'status-indicator';
-    statusText.textContent = 'Not configured';
-  }
-}
-
-function isValidSupabaseUrl(url) {
-  try {
-    const urlObj = new URL(url);
-    return urlObj.hostname.includes('supabase.co') && urlObj.protocol === 'https:';
-  } catch {
-    return false;
-  }
 }
 
 // Settings Management
@@ -704,7 +514,6 @@ async function exportSettings() {
     
     // Remove sensitive data
     const exportData = { ...settings };
-    delete exportData.supabaseAnonKey;
     
     const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);

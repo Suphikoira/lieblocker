@@ -24,7 +24,7 @@ A Chrome extension that automatically detects and skips lies in YouTube videos u
 1. Click the LieBlocker extension icon
 2. Go to Settings tab
 3. Add your API keys:
-   - **Supadata API Token**: For transcript extraction
+   - **Supadata API Token**: For transcript extraction (get at https://supadata.ai)
    - **AI API Key**: OpenAI or Google Gemini for lie detection
 4. Configure your preferences:
    - Detection mode (visual warnings or auto-skip)
