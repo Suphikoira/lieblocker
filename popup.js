@@ -162,12 +162,15 @@ function setupSkipLiesToggle() {
     chrome.storage.sync.get(['detectionMode']).then(settings => {
       const isSkipMode = settings.detectionMode === 'skip';
       skipToggle.classList.toggle('active', isSkipMode);
+      console.log('🔧 Skip toggle initialized:', isSkipMode ? 'ON' : 'OFF');
     });
     
     // Handle toggle click
     skipToggle.addEventListener('click', async () => {
       const isCurrentlyActive = skipToggle.classList.contains('active');
       const newMode = isCurrentlyActive ? 'visual' : 'skip';
+      
+      console.log('🔧 Skip toggle clicked:', newMode);
       
       // Update toggle state
       skipToggle.classList.toggle('active', !isCurrentlyActive);
@@ -182,6 +185,12 @@ function setupSkipLiesToggle() {
           chrome.tabs.sendMessage(tab.id, { 
             type: 'updateDetectionMode', 
             mode: newMode 
+          }, (response) => {
+            if (chrome.runtime.lastError) {
+              console.error('Error updating detection mode:', chrome.runtime.lastError);
+            } else {
+              console.log('✅ Detection mode updated successfully:', newMode);
+            }
           });
         }
       } catch (error) {
