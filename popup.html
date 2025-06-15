@@ -24,42 +24,44 @@
       background: #f8f9fa;
       border-bottom: 1px solid #e0e0e0;
       position: relative;
+      padding: 8px 16px;
+      align-items: center;
+    }
+    
+    .tabs-container {
+      display: flex;
+      flex: 1;
+      background: white;
+      border-radius: 8px;
+      padding: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      border: 1px solid #e8eaed;
     }
     
     .tab {
       flex: 1;
-      padding: 16px 20px;
+      padding: 8px 12px;
       background: none;
       border: none;
-      font-size: 16px;
-      font-weight: 600;
-      color: #6b7280;
+      font-size: 13px;
+      font-weight: 500;
+      color: #5f6368;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      border-radius: 6px;
       transition: all 0.2s ease;
     }
     
     .tab.active {
-      color: #333;
-      background: #ffffff;
-      border-bottom: 2px solid #4285f4;
-    }
-    
-    .tab-icon {
-      width: 20px;
-      height: 20px;
-      fill: currentColor;
+      background: #4285f4;
+      color: white;
     }
     
     /* Skip Lies Toggle */
     .skip-toggle-container {
-      position: absolute;
-      right: 16px;
-      top: 50%;
-      transform: translateY(-50%);
+      margin-left: 16px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -373,33 +375,6 @@
     .loading {
       opacity: 0.6;
       pointer-events: none;
-    }
-    
-    .tab-container {
-      display: flex;
-      background: white;
-      border-radius: 8px;
-      padding: 4px;
-      margin-bottom: 16px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-      border: 1px solid #e8eaed;
-    }
-    
-    .tab {
-      flex: 1;
-      padding: 8px 12px;
-      text-align: center;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
-      font-weight: 500;
-      transition: all 0.2s ease;
-      color: #5f6368;
-    }
-    
-    .tab.active {
-      background: #4285f4;
-      color: white;
     }
     
     .tab-content {
@@ -803,9 +778,11 @@
 <body>
   <div class="container">
     <div class="header-tabs">
-      <div class="tab active" data-tab="overview">Overview</div>
-      <div class="tab" data-tab="lies">Lies</div>
-      <div class="tab" data-tab="settings">Settings</div>
+      <div class="tabs-container">
+        <div class="tab active" data-tab="overview">Overview</div>
+        <div class="tab" data-tab="lies">Lies</div>
+        <div class="tab" data-tab="settings">Settings</div>
+      </div>
       
       <!-- Skip Lies Toggle -->
       <div class="skip-toggle-container">

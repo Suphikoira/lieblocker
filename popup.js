@@ -93,6 +93,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setupRealTimeUpdates();
     setupDownloadLinks();
     setupAnalysisDurationSlider();
+    setupSkipLiesToggle();
     
     // Hide loading state
     hideLoadingState();
@@ -153,6 +154,47 @@ function setupTabNavigation() {
   });
 }
 
+function setupSkipLiesToggle() {
+  const skipToggle = document.getElementById('skip-lies-toggle');
+  
+  if (skipToggle) {
+    // Load current setting
+    chrome.storage.sync.get(['detectionMode']).then(settings => {
+      const isSkipMode = settings.detectionMode === 'skip';
+      skipToggle.classList.toggle('active', isSkipMode);
+    });
+    
+    // Handle toggle click
+    skipToggle.addEventListener('click', async () => {
+      const isCurrentlyActive = skipToggle.classList.contains('active');
+      const newMode = isCurrentlyActive ? 'visual' : 'skip';
+      
+      // Update toggle state
+      skipToggle.classList.toggle('active', !isCurrentlyActive);
+      
+      // Save setting
+      await chrome.storage.sync.set({ detectionMode: newMode });
+      
+      // Notify content script
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab && tab.url && tab.url.includes('youtube.com/watch')) {
+          chrome.tabs.sendMessage(tab.id, { 
+            type: 'updateDetectionMode', 
+            mode: newMode 
+          });
+        }
+      } catch (error) {
+        console.error('Error updating detection mode:', error);
+      }
+      
+      // Show notification
+      const modeText = newMode === 'skip' ? 'Skip Lies Automatically' : 'Visual Warnings Only';
+      showNotification(`Mode: ${modeText}`, 'success');
+    });
+  }
+}
+
 function setupAnalysisDurationSlider() {
   const durationSlider = document.getElementById('analysis-duration');
   const durationDisplay = document.getElementById('duration-display');
@@ -178,17 +220,6 @@ async function loadSettings() {
     const settings = await chrome.storage.sync.get([
       'detectionMode', 'globalSensitivity', 'aiProvider', 'openaiModel', 'geminiModel', 'analysisDuration'
     ]);
-    
-    // Update UI elements
-    const detectionModeSelect = document.getElementById('detection-mode');
-    if (detectionModeSelect && settings.detectionMode) {
-      detectionModeSelect.value = settings.detectionMode;
-    }
-    
-    const globalSensitivitySelect = document.getElementById('global-sensitivity');
-    if (globalSensitivitySelect && settings.globalSensitivity) {
-      globalSensitivitySelect.value = settings.globalSensitivity;
-    }
     
     // Load analysis duration setting
     const analysisDurationSlider = document.getElementById('analysis-duration');
@@ -457,39 +488,6 @@ function updateToggle(id, value) {
 }
 
 function setupEventListeners() {
-  // Settings changes
-  const detectionModeSelect = document.getElementById('detection-mode');
-  if (detectionModeSelect) {
-    detectionModeSelect.addEventListener('change', async (e) => {
-      const newMode = e.target.value;
-      await chrome.storage.sync.set({ detectionMode: newMode });
-      
-      // Notify content script of detection mode change
-      try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab && tab.url && tab.url.includes('youtube.com/watch')) {
-          chrome.tabs.sendMessage(tab.id, { 
-            type: 'updateDetectionMode', 
-            mode: newMode 
-          });
-        }
-      } catch (error) {
-        console.error('Error updating detection mode:', error);
-      }
-      
-      const modeText = newMode === 'skip' ? 'Skip Lies' : 'Visual Warnings';
-      showNotification(`Detection mode updated to: ${modeText}`, 'success');
-    });
-  }
-  
-  const globalSensitivitySelect = document.getElementById('global-sensitivity');
-  if (globalSensitivitySelect) {
-    globalSensitivitySelect.addEventListener('change', async (e) => {
-      await chrome.storage.sync.set({ globalSensitivity: e.target.value });
-      showNotification('Detection threshold updated', 'success');
-    });
-  }
-  
   // AI provider selection
   const aiProviderSelect = document.getElementById('ai-provider');
   if (aiProviderSelect) {
@@ -619,45 +617,6 @@ function setupLiesCircleClickHandler() {
 }
 
 function setupDownloadLinks() {
-  // Download transcript JSON
-  const downloadTranscriptJson = document.getElementById('download-transcript-json');
-  if (downloadTranscriptJson) {
-    downloadTranscriptJson.addEventListener('click', () => {
-      if (window.LieBlockerTranscriptData) {
-        window.LieBlockerTranscriptData.downloadJSON();
-        showNotification('Transcript JSON downloaded', 'success');
-      } else {
-        showNotification('No transcript data available. Analyze a video first.', 'warning');
-      }
-    });
-  }
-  
-  // Download transcript CSV
-  const downloadTranscriptCsv = document.getElementById('download-transcript-csv');
-  if (downloadTranscriptCsv) {
-    downloadTranscriptCsv.addEventListener('click', () => {
-      if (window.LieBlockerTranscriptData) {
-        window.LieBlockerTranscriptData.downloadCSV();
-        showNotification('Transcript CSV downloaded', 'success');
-      } else {
-        showNotification('No transcript data available. Analyze a video first.', 'warning');
-      }
-    });
-  }
-  
-  // Download analysis data
-  const downloadAnalysisData = document.getElementById('download-analysis-data');
-  if (downloadAnalysisData) {
-    downloadAnalysisData.addEventListener('click', () => {
-      if (window.LieBlockerAnalysisData) {
-        window.LieBlockerAnalysisData.downloadAnalysisData();
-        showNotification('Analysis data downloaded', 'success');
-      } else {
-        showNotification('No analysis data available. Analyze a video first.', 'warning');
-      }
-    });
-  }
-  
   // Download lies data
   const downloadLiesData = document.getElementById('download-lies-data');
   if (downloadLiesData) {
@@ -674,33 +633,19 @@ function setupDownloadLinks() {
 
 function updateDownloadLinksAvailability() {
   const downloadSection = document.getElementById('download-section');
-  const transcriptJsonBtn = document.getElementById('download-transcript-json');
-  const transcriptCsvBtn = document.getElementById('download-transcript-csv');
-  const analysisDataBtn = document.getElementById('download-analysis-data');
   const liesDataBtn = document.getElementById('download-lies-data');
   
   // Check if any data is available
-  const hasTranscriptData = !!window.LieBlockerTranscriptData;
-  const hasAnalysisData = !!window.LieBlockerAnalysisData;
   const hasLiesData = !!window.LieBlockerDetectedLies;
   
   // Show download section if any data is available
-  if (hasTranscriptData || hasAnalysisData || hasLiesData) {
+  if (hasLiesData) {
     if (downloadSection) {
       downloadSection.style.display = 'block';
     }
   }
   
   // Update individual button states
-  if (transcriptJsonBtn) {
-    transcriptJsonBtn.classList.toggle('disabled', !hasTranscriptData);
-  }
-  if (transcriptCsvBtn) {
-    transcriptCsvBtn.classList.toggle('disabled', !hasTranscriptData);
-  }
-  if (analysisDataBtn) {
-    analysisDataBtn.classList.toggle('disabled', !hasAnalysisData);
-  }
   if (liesDataBtn) {
     liesDataBtn.classList.toggle('disabled', !hasLiesData);
   }
