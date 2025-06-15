@@ -834,6 +834,25 @@ async function updateSessionStats(newLies = [], actualSkippedTime = 0) {
   }
 }
 
+// NEW: Function to initialize skip mode with lies (works for both fresh analysis and cached results)
+async function initializeSkipMode(lies, videoId) {
+  try {
+    console.log('🚀 Initializing skip mode with', lies.length, 'lies for video:', videoId);
+    
+    // Check if skip mode is enabled
+    const settings = await chrome.storage.sync.get(['detectionMode']);
+    if (settings.detectionMode === 'skip' && lies.length > 0) {
+      console.log('⏭️ Skip mode enabled, starting monitoring...');
+      currentVideoLies = lies;
+      startSkipModeMonitoring();
+    } else {
+      console.log('⏭️ Skip mode disabled or no lies to skip');
+    }
+  } catch (error) {
+    console.error('Error initializing skip mode:', error);
+  }
+}
+
 // Enhanced main function to process video with full transcript analysis
 async function processVideo() {
   try {
@@ -883,12 +902,8 @@ async function processVideo() {
           isComplete: true
         });
         
-        // Start skip mode monitoring if skip mode is enabled
-        const settings = await chrome.storage.sync.get(['detectionMode']);
-        if (settings.detectionMode === 'skip') {
-          currentVideoLies = cachedAnalysis.claims;
-          startSkipModeMonitoring();
-        }
+        // NEW: Initialize skip mode with cached lies
+        await initializeSkipMode(cachedAnalysis.claims, videoId);
       }
       
       // Display cache results
@@ -996,12 +1011,8 @@ async function processVideo() {
       data: finalAnalysis
     });
 
-    // Start skip mode monitoring if skip mode is enabled and lies were found
-    const detectionSettings = await chrome.storage.sync.get(['detectionMode']);
-    if (detectionSettings.detectionMode === 'skip' && allLies.length > 0) {
-      currentVideoLies = allLies;
-      startSkipModeMonitoring();
-    }
+    // NEW: Initialize skip mode with fresh analysis results
+    await initializeSkipMode(allLies, videoId);
 
   } catch (error) {
     console.error('Error in processVideo:', error);
