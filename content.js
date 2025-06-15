@@ -326,7 +326,7 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     chrome.runtime.sendMessage({
       type: 'cacheUpdated',
       videoId: videoId,
-      totalClaims: cacheData.claims.length
+      totalClaims: lies.length
     });
     
   } catch (error) {
@@ -1284,9 +1284,13 @@ function updateDetectionMode(mode) {
   }
 }
 
-// Listen for messages from popup
+// NEW: Enhanced message listener with ping response
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'startAnalysis') {
+  if (message.type === 'ping') {
+    // Respond to ping to indicate content script is ready
+    sendResponse({ ready: true });
+    return true;
+  } else if (message.type === 'startAnalysis') {
     processVideo();
     sendResponse({ success: true });
   } else if (message.type === 'getCurrentTimestamp') {
