@@ -1027,6 +1027,62 @@ async function processVideo() {
   }
 }
 
+// NEW: Automatic video detection and lie data loading
+async function autoDetectAndLoadVideo() {
+  try {
+    const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
+    if (!videoId) {
+      console.log('🎬 No video ID found in URL');
+      return;
+    }
+
+    console.log('🎬 Auto-detecting video:', videoId);
+    
+    // Initialize empty LieBlockerDetectedLies object immediately
+    storeDetectedLiesForDownload([], videoId);
+
+    // Check for cached analysis from Supabase
+    console.log('🔍 Auto-checking for cached analysis...');
+    const cachedAnalysis = await getCachedAnalysis(videoId);
+    
+    if (cachedAnalysis && cachedAnalysis.claims) {
+      console.log('✅ Found cached analysis with', cachedAnalysis.claims.length, 'lies');
+      
+      // Send lies update to background and popup
+      chrome.runtime.sendMessage({
+        type: 'liesUpdate',
+        claims: cachedAnalysis.claims,
+        videoId: videoId,
+        isComplete: true
+      });
+      
+      // Initialize skip mode with cached lies
+      await initializeSkipMode(cachedAnalysis.claims, videoId);
+      
+      // Notify that data is loaded
+      chrome.runtime.sendMessage({
+        type: 'analysisResult',
+        data: `✅ Lie data loaded automatically!\n\nFound ${cachedAnalysis.claims.length} lies in this video from previous analysis.\n\nSkip mode is ${currentVideoLies.length > 0 ? 'ready' : 'disabled'}.`
+      });
+      
+      console.log('✅ Auto-loaded lie data for video:', videoId);
+    } else {
+      console.log('📭 No cached analysis found for video:', videoId);
+      
+      // Clear any existing lies data
+      chrome.runtime.sendMessage({
+        type: 'liesUpdate',
+        claims: [],
+        videoId: videoId,
+        isComplete: true
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error in auto-detection:', error);
+  }
+}
+
 // Function to get current video timestamp
 function getCurrentVideoTimestamp() {
   try {
@@ -1335,6 +1391,14 @@ function handlePageNavigation() {
     
     // Clear previous video data objects
     window.LieBlockerDetectedLies = null;
+    
+    // NEW: Auto-detect and load lie data for new video
+    if (currentVideoId && isYouTubeVideoPage()) {
+      console.log('🎬 Auto-detecting new video:', currentVideoId);
+      setTimeout(() => {
+        autoDetectAndLoadVideo();
+      }, 2000); // Wait 2 seconds for page to stabilize
+    }
   }
 }
 
@@ -1357,7 +1421,17 @@ handlePageNavigation();
 setTimeout(() => {
   if (window.SupabaseDB) {
     console.log('✅ Supabase client ready for content script');
+    
+    // Auto-detect current video on initial load
+    if (isYouTubeVideoPage()) {
+      autoDetectAndLoadVideo();
+    }
   } else {
     console.warn('⚠️ Supabase client not available, using local storage fallback');
+    
+    // Still try auto-detection with local storage
+    if (isYouTubeVideoPage()) {
+      autoDetectAndLoadVideo();
+    }
   }
 }, 1000);

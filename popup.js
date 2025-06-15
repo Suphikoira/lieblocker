@@ -69,12 +69,13 @@ const progressStages = {
   ai_request: { icon: '📡', message: 'Sending to AI...', color: '#e83e8c' },
   processing_response: { icon: '⚡', message: 'Processing response...', color: '#20c997' },
   complete: { icon: '✅', message: 'Analysis complete', color: '#28a745' },
-  error: { icon: '❌', message: 'Analysis failed', color: '#dc3545' }
+  error: { icon: '❌', message: 'Analysis failed', color: '#dc3545' },
+  auto_loaded: { icon: '🚀', message: 'Lie data auto-loaded', color: '#17a2b8' }
 };
 
-// NEW: Enhanced message sending with retry logic
-async function sendMessageToContentScript(message, retries = 3) {
-  for (let i = 0; i < retries; i++) {
+// NEW: Enhanced connection handling with retry logic
+async function sendMessageToContentScript(message, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       
@@ -82,7 +83,23 @@ async function sendMessageToContentScript(message, retries = 3) {
         throw new Error('Not on a YouTube video page');
       }
       
-      return new Promise((resolve, reject) => {
+      // First, ping the content script to see if it's ready
+      const pingResponse = await new Promise((resolve, reject) => {
+        chrome.tabs.sendMessage(tab.id, { type: 'ping' }, (response) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(response);
+          }
+        });
+      });
+      
+      if (!pingResponse || !pingResponse.ready) {
+        throw new Error('Content script not ready');
+      }
+      
+      // Content script is ready, send the actual message
+      const response = await new Promise((resolve, reject) => {
         chrome.tabs.sendMessage(tab.id, message, (response) => {
           if (chrome.runtime.lastError) {
             reject(new Error(chrome.runtime.lastError.message));
@@ -91,43 +108,39 @@ async function sendMessageToContentScript(message, retries = 3) {
           }
         });
       });
-    } catch (error) {
-      console.warn(`Message attempt ${i + 1} failed:`, error.message);
       
-      if (i === retries - 1) {
+      return response;
+      
+    } catch (error) {
+      console.log(`Attempt ${attempt}/${maxRetries} failed:`, error.message);
+      
+      if (attempt === maxRetries) {
         throw error;
       }
       
-      // Wait before retry
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, 1000 * attempt));
     }
-  }
-}
-
-// NEW: Check if content script is ready
-async function isContentScriptReady() {
-  try {
-    const response = await sendMessageToContentScript({ type: 'ping' }, 1);
-    return response && response.ready;
-  } catch (error) {
-    return false;
   }
 }
 
 // NEW: Wait for content script to be ready
-async function waitForContentScript(maxWait = 5000) {
+async function waitForContentScript(maxWaitTime = 5000) {
   const startTime = Date.now();
   
-  while (Date.now() - startTime < maxWait) {
-    if (await isContentScriptReady()) {
-      console.log('✅ Content script is ready');
-      return true;
+  while (Date.now() - startTime < maxWaitTime) {
+    try {
+      const response = await sendMessageToContentScript({ type: 'ping' }, 1);
+      if (response && response.ready) {
+        return true;
+      }
+    } catch (error) {
+      // Content script not ready yet, continue waiting
     }
     
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, 500));
   }
   
-  console.warn('⚠️ Content script not ready after timeout');
   return false;
 }
 
@@ -792,18 +805,17 @@ async function saveApiKey() {
 
 async function analyzeCurrentVideo() {
   try {
-    // First check if we're on a YouTube video page
+    // Check if content script is ready first
+    const isReady = await waitForContentScript();
+    if (!isReady) {
+      showNotification('Content script not ready. Please refresh the page and try again.', 'error');
+      return;
+    }
+    
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     
     if (!tab || !tab.url || !tab.url.includes('youtube.com/watch')) {
       showNotification('Please navigate to a YouTube video', 'error');
-      return;
-    }
-    
-    // Check if content script is ready
-    const isReady = await waitForContentScript(3000);
-    if (!isReady) {
-      showNotification('Please refresh the page and try again', 'error');
       return;
     }
     
@@ -842,13 +854,8 @@ async function analyzeCurrentVideo() {
     // Send message to content script to start analysis with retry logic
     try {
       const response = await sendMessageToContentScript({ type: 'startAnalysis' });
-      if (response && response.success) {
-        showNotification('Full video analysis started! Watch for real-time progress updates.', 'info');
-      } else {
-        throw new Error('Analysis start failed');
-      }
+      showNotification('Full video analysis started! Watch for real-time progress updates.', 'info');
     } catch (error) {
-      console.error('Error starting analysis:', error);
       showNotification('Could not start analysis. Please refresh the page and try again.', 'error');
       resetAnalysisUI();
     }
@@ -882,6 +889,24 @@ async function checkCurrentVideoImmediate() {
       if (videoId) {
         currentVideoId = videoId;
         await updateVideoStatsImmediate(videoId, tab.title);
+        
+        // NEW: Try to load current video lies from background
+        try {
+          const response = await chrome.runtime.sendMessage({ 
+            type: 'getCurrentVideoLies', 
+            videoId: videoId 
+          });
+          
+          if (response && response.success && response.lies && response.lies.length > 0) {
+            console.log('📋 Loaded current video lies from background:', response.lies.length);
+            currentVideoLies = response.lies;
+            updateLiesIndicator(response.lies);
+            updateProgressIndicator('auto_loaded', `Auto-loaded ${response.lies.length} lies`);
+          }
+        } catch (error) {
+          console.log('No current video lies in background storage');
+        }
+        
         return true;
       }
     } else {
@@ -1118,14 +1143,6 @@ async function jumpToTimestamp(timestamp, timeInSeconds) {
   try {
     console.log(`🎯 Attempting to jump to lie timestamp: ${timestamp} (${timeInSeconds}s)`);
     
-    // Get the active YouTube tab
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    
-    if (!tab || !tab.url || !tab.url.includes('youtube.com/watch')) {
-      showNotification('Please navigate to a YouTube video', 'error');
-      return;
-    }
-    
     // Validate timeInSeconds
     if (isNaN(timeInSeconds) || timeInSeconds < 0) {
       console.error('Invalid timestamp:', timeInSeconds);
@@ -1133,7 +1150,7 @@ async function jumpToTimestamp(timestamp, timeInSeconds) {
       return;
     }
     
-    console.log(`🎯 Sending jump message to tab ${tab.id}`);
+    console.log(`🎯 Sending jump message with retry logic`);
     
     // Send message to content script to jump to timestamp with retry logic
     try {
@@ -1144,13 +1161,7 @@ async function jumpToTimestamp(timestamp, timeInSeconds) {
       
       if (response && response.success) {
         console.log(`✅ Successfully jumped to lie at ${timestamp}`);
-        
-        // Show success notification with enhanced feedback
         showNotification(`🎯 Jumped to lie at ${timestamp}`, 'success', 2000);
-        
-        // DO NOT close popup - keep it open for seamless experience
-        console.log('🎯 Popup remains open for continued lies review');
-        
       } else {
         console.error('Failed to jump to timestamp:', response);
         showNotification('Failed to jump to timestamp', 'error');
@@ -1449,35 +1460,26 @@ function setupRealTimeUpdates() {
     
     // NEW: Handle lie skip tracking for accurate stats
     if (message.type === 'lieSkipped') {
-      handleLieSkipped(message);
+      console.log('⏭️ Popup: Lie skipped, updating stats with actual time:', message.actualSkippedTime);
+      
+      // Update session stats with actual skipped time
+      chrome.storage.local.get(['sessionStats']).then(stats => {
+        const currentStats = stats.sessionStats || {
+          videosAnalyzed: 0,
+          liesDetected: 0,
+          highSeverity: 0,
+          timeSaved: 0
+        };
+        
+        currentStats.timeSaved += message.actualSkippedTime;
+        
+        chrome.storage.local.set({ sessionStats: currentStats }).then(() => {
+          loadStats(); // Refresh stats display
+          showNotification(`⏭️ Skipped ${message.actualSkippedTime}s lie at ${message.lie.timestamp}`, 'info', 2000);
+        });
+      });
     }
   });
-}
-
-// NEW: Handle lie skip tracking for accurate time saved calculation
-function handleLieSkipped(message) {
-  console.log('⏭️ Popup: Lie skipped event received:', message);
-  
-  // Update session stats with actual skipped time
-  if (message.actualSkippedTime > 0) {
-    currentStats.timeSaved += message.actualSkippedTime;
-    
-    // Update UI immediately
-    const timeSaved = currentStats.timeSaved;
-    if (timeSaved >= 60) {
-      const minutes = Math.floor(timeSaved / 60);
-      const seconds = timeSaved % 60;
-      updateStatElement('time-saved', seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`);
-    } else {
-      updateStatElement('time-saved', `${timeSaved}s`);
-    }
-    
-    // Save updated stats
-    chrome.storage.local.set({ sessionStats: currentStats });
-    
-    // Show notification
-    showNotification(`⏭️ Skipped ${message.actualSkippedTime}s lie! Total saved: ${timeSaved}s`, 'success', 2000);
-  }
 }
 
 // Handle real-time progress updates with visual cues
@@ -1507,11 +1509,16 @@ function handleProgressUpdate(message) {
 function handleAnalysisUpdate(data) {
   console.log('📊 Analysis update received:', data);
   
-  if (data.includes('Analysis complete') || data.includes('loaded from cache')) {
-    // Analysis finished
+  if (data.includes('Analysis complete') || data.includes('loaded from cache') || data.includes('loaded from Supabase') || data.includes('Auto-loaded')) {
+    // Analysis finished or auto-loaded
     isAnalysisRunning = false;
     resetAnalysisUI();
-    updateProgressIndicator('complete', 'Full video analysis complete');
+    
+    if (data.includes('Auto-loaded')) {
+      updateProgressIndicator('auto_loaded', 'Lie data auto-loaded');
+    } else {
+      updateProgressIndicator('complete', 'Full video analysis complete');
+    }
     
     // Refresh the video stats and lies
     setTimeout(async () => {
@@ -1528,7 +1535,11 @@ function handleAnalysisUpdate(data) {
       }
     }, 1000);
     
-    showNotification('Full video analysis complete! Check the Lies tab for results.', 'success');
+    if (data.includes('Auto-loaded')) {
+      showNotification('Lie data auto-loaded from previous analysis!', 'info');
+    } else {
+      showNotification('Full video analysis complete! Check the Lies tab for results.', 'success');
+    }
   } else if (data.includes('Error')) {
     // Analysis error
     isAnalysisRunning = false;
@@ -1555,8 +1566,8 @@ function handleLiesUpdate(message) {
       renderLiesDetails(currentVideoLies);
     }
     
-    // Show notification for detected lies
-    if (currentVideoLies.length > 0 && !message.isComplete) {
+    // Show notification for detected lies (but not for auto-loaded data)
+    if (currentVideoLies.length > 0 && !message.isComplete && !message.videoId) {
       showNotification(`🚨 ${currentVideoLies.length} lies detected!`, 'warning', 3000);
     }
   }
@@ -1566,7 +1577,10 @@ function handleLiesUpdate(message) {
     isAnalysisRunning = false;
     resetAnalysisUI();
     updateProgressIndicator('complete', `Full video analysis complete - ${currentVideoLies.length} lies found`);
-    showNotification(`✅ Full video analysis complete! Found ${currentVideoLies.length} lies.`, 'success', 5000);
+    
+    if (!message.videoId) { // Don't show for auto-loaded data
+      showNotification(`✅ Full video analysis complete! Found ${currentVideoLies.length} lies.`, 'success', 5000);
+    }
     
     // Update download links availability after analysis is complete
     setTimeout(() => {
@@ -1602,7 +1616,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   if (message.type === 'lieSkipped') {
     // Handle lie skip tracking
-    handleLieSkipped(message);
+    console.log('⏭️ Popup: Lie skipped, updating stats with actual time:', message.actualSkippedTime);
+    
+    // Update session stats with actual skipped time
+    chrome.storage.local.get(['sessionStats']).then(stats => {
+      const currentStats = stats.sessionStats || {
+        videosAnalyzed: 0,
+        liesDetected: 0,
+        highSeverity: 0,
+        timeSaved: 0
+      };
+      
+      currentStats.timeSaved += message.actualSkippedTime;
+      
+      chrome.storage.local.set({ sessionStats: currentStats }).then(() => {
+        loadStats(); // Refresh stats display
+        showNotification(`⏭️ Skipped ${message.actualSkippedTime}s lie at ${message.lie.timestamp}`, 'info', 2000);
+      });
+    });
   }
 });
 
