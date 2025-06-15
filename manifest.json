@@ -13,12 +13,13 @@
     "https://*.youtube.com/*",
     "https://api.supadata.ai/*",
     "https://api.openai.com/*",
-    "https://generativelanguage.googleapis.com/*"
+    "https://generativelanguage.googleapis.com/*",
+    "https://*.supabase.co/*"
   ],
   "content_scripts": [
     {
       "matches": ["https://*.youtube.com/*"],
-      "js": ["content.js"]
+      "js": ["supabase-client.js", "content.js"]
     }
   ],
   "background": {

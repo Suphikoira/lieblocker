@@ -125,55 +125,81 @@ function formatSecondsToTimestamp(seconds) {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Function to get cached analysis results from Supabase
+// Function to get cached analysis results from Supabase with fallback to local storage
 async function getCachedAnalysis(videoId) {
   try {
-    // Import Supabase client
-    const { db } = await import('./lib/supabase.js');
-    
-    // Get video analysis from Supabase
-    const videoStats = await db.getVideoStats(videoId);
-    
-    if (videoStats && videoStats.analysis) {
-      console.log('📊 Found cached analysis in Supabase:', videoStats);
+    // First try Supabase
+    if (window.SupabaseDB) {
+      console.log('🔍 Checking Supabase for cached analysis...');
+      const videoStats = await window.SupabaseDB.getVideoStats(videoId);
       
-      // Transform Supabase data to match expected format
-      const cached = {
-        analysis: `✅ Analysis loaded from Supabase!\n\nFound ${videoStats.totalLies} lies in this video.`,
-        claims: videoStats.lies.map(lie => ({
-          timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
-          timeInSeconds: lie.timestamp_seconds,
-          duration: lie.duration_seconds,
-          claim: lie.claim_text,
-          explanation: lie.explanation,
-          confidence: lie.confidence,
-          severity: lie.severity
-        })),
-        timestamp: new Date(videoStats.analysis.created_at).getTime(),
-        videoId: videoId,
-        version: videoStats.analysis.analysis_version
-      };
-      
-      // Create LieBlockerDetectedLies object from cached data
-      if (cached.claims && cached.claims.length > 0) {
-        storeDetectedLiesForDownload(cached.claims, videoId);
+      if (videoStats && videoStats.analysis) {
+        console.log('📊 Found cached analysis in Supabase:', videoStats);
+        
+        // Transform Supabase data to match expected format
+        const cached = {
+          analysis: `✅ Analysis loaded from Supabase!\n\nFound ${videoStats.totalLies} lies in this video.`,
+          claims: videoStats.lies.map(lie => ({
+            timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
+            timeInSeconds: lie.timestamp_seconds,
+            duration: lie.duration_seconds,
+            claim: lie.claim_text,
+            explanation: lie.explanation,
+            confidence: lie.confidence,
+            severity: lie.severity
+          })),
+          timestamp: new Date(videoStats.analysis.created_at).getTime(),
+          videoId: videoId,
+          version: videoStats.analysis.analysis_version
+        };
+        
+        // Create LieBlockerDetectedLies object from cached data
+        if (cached.claims && cached.claims.length > 0) {
+          storeDetectedLiesForDownload(cached.claims, videoId);
+        }
+        
+        return cached;
       }
+    }
+    
+    // Fallback to local storage
+    console.log('🔍 Checking local storage for cached analysis...');
+    const result = await chrome.storage.local.get(`analysis_${videoId}`);
+    const cached = result[`analysis_${videoId}`];
+    
+    if (cached) {
+      // Check if cache is still valid (24 hours)
+      const cacheAge = Date.now() - cached.timestamp;
+      const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
       
-      return cached;
+      if (cacheAge < maxAge) {
+        // Create LieBlockerDetectedLies object from cached data
+        if (cached.claims && cached.claims.length > 0) {
+          storeDetectedLiesForDownload(cached.claims, videoId);
+        }
+        
+        return cached;
+      } else {
+        // Remove expired cache
+        chrome.storage.local.remove(`analysis_${videoId}`);
+      }
     }
     
     return null;
   } catch (error) {
-    console.error('Error retrieving cached analysis from Supabase:', error);
+    console.error('Error retrieving cached analysis:', error);
     return null;
   }
 }
 
-// Function to save analysis results to Supabase
+// Function to save analysis results to Supabase with fallback to local storage
 async function saveAnalysisToSupabase(videoId, analysisText, lies = [], videoTitle = '', channelName = '') {
   try {
-    // Import Supabase client
-    const { db } = await import('./lib/supabase.js');
+    if (!window.SupabaseDB) {
+      console.log('⚠️ Supabase not available, falling back to local storage');
+      await saveAnalysisToCache(videoId, analysisText, lies);
+      return;
+    }
     
     console.log('💾 Saving analysis to Supabase...');
     
@@ -185,7 +211,7 @@ async function saveAnalysisToSupabase(videoId, analysisText, lies = [], videoTit
       duration: null // We could get this from the video element if needed
     };
     
-    const video = await db.upsertVideo(videoData);
+    const video = await window.SupabaseDB.upsertVideo(videoData);
     console.log('📹 Video record created/updated:', video);
     
     // 2. Create video analysis record
@@ -197,7 +223,7 @@ async function saveAnalysisToSupabase(videoId, analysisText, lies = [], videoTit
       confidence_threshold: 0.85
     };
     
-    const analysis = await db.createVideoAnalysis(analysisData);
+    const analysis = await window.SupabaseDB.createVideoAnalysis(analysisData);
     console.log('📊 Analysis record created:', analysis);
     
     // 3. Create detected lies records
@@ -213,7 +239,7 @@ async function saveAnalysisToSupabase(videoId, analysisText, lies = [], videoTit
         category: lie.category || 'other'
       }));
       
-      const savedLies = await db.createDetectedLies(liesData);
+      const savedLies = await window.SupabaseDB.createDetectedLies(liesData);
       console.log('🚨 Lies records created:', savedLies.length);
     }
     
@@ -768,6 +794,24 @@ async function updateSessionStats(newLies = []) {
     console.error('Error updating session stats:', error);
   }
 }
+
+// Load Supabase client when content script loads
+(async function loadSupabaseClient() {
+  try {
+    // Create a script element to load Supabase
+    const script = document.createElement('script');
+    script.src = chrome.runtime.getURL('lib/supabase.js');
+    script.onload = () => {
+      console.log('✅ Supabase client loaded successfully');
+    };
+    script.onerror = (error) => {
+      console.warn('⚠️ Failed to load Supabase client, using local storage fallback:', error);
+    };
+    document.head.appendChild(script);
+  } catch (error) {
+    console.warn('⚠️ Failed to load Supabase client, using local storage fallback:', error);
+  }
+})();
 
 // Enhanced main function to process video with full transcript analysis
 async function processVideo() {
