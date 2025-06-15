@@ -8,8 +8,8 @@
   if (typeof window === 'undefined') return;
   
   // Supabase configuration - you need to replace these with your actual values
-  const SUPABASE_URL = 'https://your-project.supabase.co';
-  const SUPABASE_ANON_KEY = 'your-anon-key';
+  const SUPABASE_URL = 'https://cwetzwmfddegeihmmlnv.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3ZXR6d21mZGRlZ2VpaG1tbG52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk5MjU0ODAsImV4cCI6MjA2NTUwMTQ4MH0.gpDQ3Bw-lfQbmGsLbIWbi2LiDijW_HEmbIs2-4GAEwk';
   
   // Simple Supabase client implementation for Chrome extension
   class SimpleSupabaseClient {
