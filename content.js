@@ -1,3 +1,84 @@
+// NEW: Function to extract transcript from DOM (default method)
+async function extractTranscriptFromDOM() {
+  console.log('📋 Content: Extracting transcript from DOM...');
+  
+  try {
+    // Wait for transcript to be available
+    await waitForTranscriptElements();
+    
+    const transcriptSelector = 'ytd-transcript-segment-renderer';
+    const transcriptElements = document.querySelectorAll(transcriptSelector);
+
+    if (transcriptElements.length === 0) {
+      throw new Error('⚠️ Transcript not found. Make sure the transcript is visible on the page.');
+    }
+
+    console.log(`📋 Content: Found ${transcriptElements.length} transcript segments`);
+
+    const transcriptSegments = Array.from(transcriptElements).map(segment => {
+      const timestampElement = segment.querySelector('div.segment-timestamp');
+      const textElement = segment.querySelector('yt-formatted-string.segment-text');
+
+      const timestampText = timestampElement ? timestampElement.textContent.trim() : '0:00';
+      const text = textElement ? textElement.textContent.trim() : '';
+
+      // Convert timestamp to seconds
+      const timeInSeconds = parseTimestampToSeconds(timestampText);
+
+      return {
+        text: text,
+        start: timeInSeconds,
+        duration: 5 // Default duration for DOM extraction
+      };
+    }).filter(segment => segment.text); // Remove empty segments
+
+    console.log('✅ Content: Successfully extracted DOM transcript');
+    console.log(`✅ Content: ${transcriptSegments.length} valid segments processed`);
+    console.log('📋 Content: Sample segment:', transcriptSegments[0]);
+
+    return transcriptSegments;
+
+  } catch (error) {
+    console.error('❌ Content: Error extracting DOM transcript:', error);
+    throw error;
+  }
+}
+
+// Helper function to wait for transcript elements to load
+async function waitForTranscriptElements(maxWaitTime = 10000) {
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    const transcriptElements = document.querySelectorAll('ytd-transcript-segment-renderer');
+    if (transcriptElements.length > 0) {
+      console.log('📋 Content: Transcript elements found');
+      return true;
+    }
+    
+    // Wait 500ms before checking again
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  
+  throw new Error('Transcript elements not found within timeout period. Please open the transcript panel manually.');
+}
+
+// Helper function to parse timestamp string to seconds
+function parseTimestampToSeconds(timestamp) {
+  if (!timestamp || typeof timestamp !== 'string') return 0;
+  
+  const parts = timestamp.split(':').map(part => parseInt(part, 10));
+  
+  if (parts.length === 2) {
+    // MM:SS format
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 3) {
+    // H:MM:SS format
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  
+  return 0;
+}
+
 // Function to extract YouTube video transcript via background script
 async function getTranscript() {
   const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
@@ -1346,6 +1427,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Respond to ping to indicate content script is ready
     sendResponse({ ready: true });
     return true;
+  } else if (message.type === 'extractDOMTranscript') {
+    // NEW: Handle DOM transcript extraction request
+    extractTranscriptFromDOM()
+      .then(transcript => {
+        sendResponse({ success: true, data: transcript });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep message channel open for async response
   } else if (message.type === 'startAnalysis') {
     processVideo();
     sendResponse({ success: true });

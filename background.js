@@ -276,104 +276,229 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
-// Enhanced function to extract transcript using Supadata API with configurable token
+// Enhanced function to extract transcript using multiple providers with DOM as default
 async function handleTranscriptRequest(requestData) {
   const { videoId, currentUrl } = requestData;
   
   try {
-    console.log('🎬 Background: Extracting ENGLISH transcript using Supadata API for video:', videoId);
+    console.log('🎬 Background: Extracting transcript for video:', videoId);
     console.log('🌐 Background: URL being processed:', currentUrl);
     
-    // Get Supadata token from storage
-    const tokenResult = await chrome.storage.local.get(['supadataToken']);
-    const supadataToken = tokenResult.supadataToken;
+    // Get transcript provider setting (default to 'dom')
+    const settings = await chrome.storage.sync.get(['transcriptProvider']);
+    const provider = settings.transcriptProvider || 'dom';
     
-    if (!supadataToken) {
-      throw new Error('Supadata API token not configured. Please set your token in the extension settings.');
-    }
+    console.log('📡 Background: Using transcript provider:', provider);
     
-    // Build the API URL with query parameters and force English language
-    const apiUrl = new URL('https://api.supadata.ai/v1/youtube/transcript');
-    apiUrl.searchParams.append('url', currentUrl);
-    apiUrl.searchParams.append('lang', 'en'); // Force English language
-    
-    console.log('📡 Background: Making GET request to:', apiUrl.toString());
-    console.log('🇺🇸 Background: Forcing English language transcript');
-    
-    const response = await fetch(apiUrl.toString(), {
-      method: 'GET',
-      headers: {
-        'x-api-key': supadataToken,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    console.log('📡 Background: Response status:', response.status);
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('❌ Background: API Error Response:', errorText);
-      
-      // If English transcript is not available, try without language parameter as fallback
-      if (response.status === 404 || errorText.includes('language') || errorText.includes('transcript')) {
-        console.log('🔄 Background: English transcript not available, trying auto-detect...');
-        
-        // Retry without language parameter
-        const fallbackUrl = new URL('https://api.supadata.ai/v1/youtube/transcript');
-        fallbackUrl.searchParams.append('url', currentUrl);
-        
-        const fallbackResponse = await fetch(fallbackUrl.toString(), {
-          method: 'GET',
-          headers: {
-            'x-api-key': supadataToken,
-            'Content-Type': 'application/json'
-          }
-        });
-        
-        if (!fallbackResponse.ok) {
-          const fallbackErrorText = await fallbackResponse.text();
-          throw new Error(`No transcript available. Status: ${fallbackResponse.status}, message: ${fallbackErrorText}`);
-        }
-        
-        const fallbackResult = await fallbackResponse.json();
-        console.log('📋 Background: Fallback transcript received');
-        console.log('📋 Background: Language:', fallbackResult.lang);
-        
-        // Check if the fallback transcript is in English
-        if (fallbackResult.lang && fallbackResult.lang.toLowerCase() !== 'en') {
-          console.warn('⚠️ Background: Video transcript is not in English. Language detected:', fallbackResult.lang);
-          console.warn('⚠️ Background: Proceeding with non-English transcript - results may be less accurate');
-        }
-        
-        return processTranscriptResponse(fallbackResult);
-      }
-      
-      throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
-    }
-
-    const result = await response.json();
-    console.log('📋 Background: English transcript API Response received');
-    console.log('📋 Background: Language:', result.lang);
-    console.log('📋 Background: Available languages:', result.availableLangs);
-    
-    // Verify we got English transcript
-    if (result.lang && result.lang.toLowerCase() !== 'en') {
-      console.warn('⚠️ Background: Expected English but got:', result.lang);
-      console.warn('⚠️ Background: Proceeding anyway - results may be less accurate');
+    if (provider === 'dom') {
+      return await extractTranscriptFromDOM(videoId, currentUrl);
+    } else if (provider === 'alternative') {
+      return await extractTranscriptFromAlternativeAPI(videoId, currentUrl);
+    } else if (provider === 'supadata') {
+      return await extractTranscriptFromSupadata(videoId, currentUrl);
     } else {
-      console.log('✅ Background: Confirmed English transcript received');
+      // Default fallback to DOM
+      return await extractTranscriptFromDOM(videoId, currentUrl);
     }
-    
-    return processTranscriptResponse(result);
 
   } catch (error) {
     console.error('❌ Background: Error extracting transcript:', error);
+    
+    // Try fallback methods if primary method fails
+    console.log('🔄 Background: Trying fallback transcript methods...');
+    
+    try {
+      // Try DOM first as it's most reliable
+      if (provider !== 'dom') {
+        console.log('🔄 Background: Fallback to DOM extraction...');
+        return await extractTranscriptFromDOM(videoId, currentUrl);
+      }
+      
+      // Then try alternative API
+      if (provider !== 'alternative') {
+        console.log('🔄 Background: Fallback to alternative API...');
+        return await extractTranscriptFromAlternativeAPI(videoId, currentUrl);
+      }
+      
+      // Finally try Supadata
+      if (provider !== 'supadata') {
+        console.log('🔄 Background: Fallback to Supadata API...');
+        return await extractTranscriptFromSupadata(videoId, currentUrl);
+      }
+      
+    } catch (fallbackError) {
+      console.error('❌ Background: All transcript methods failed:', fallbackError);
+      throw new Error('All transcript extraction methods failed. Please ensure the video has captions available.');
+    }
+    
     throw error;
   }
 }
 
-// Helper function to process transcript response
-function processTranscriptResponse(result) {
+// NEW: Extract transcript from DOM (default method)
+async function extractTranscriptFromDOM(videoId, currentUrl) {
+  console.log('📋 Background: Extracting transcript from DOM...');
+  
+  // Send message to content script to extract transcript from DOM
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab) {
+    throw new Error('No active tab found');
+  }
+  
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tab.id, {
+      type: 'extractDOMTranscript'
+    }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      
+      if (!response || !response.success) {
+        reject(new Error(response?.error || 'Failed to extract DOM transcript'));
+        return;
+      }
+      
+      console.log('✅ Background: DOM transcript extracted successfully');
+      resolve(response.data);
+    });
+  });
+}
+
+// NEW: Extract transcript from alternative YouTube transcript API
+async function extractTranscriptFromAlternativeAPI(videoId, currentUrl) {
+  console.log('📋 Background: Extracting transcript from alternative API...');
+  
+  const apiUrl = `https://youtube-transcript-api-4c8m.onrender.com/transcript?video_id=${videoId}`;
+  
+  console.log('📡 Background: Making request to alternative API:', apiUrl);
+  
+  const response = await fetch(apiUrl, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json'
+    }
+  });
+
+  console.log('📡 Background: Alternative API response status:', response.status);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('❌ Background: Alternative API Error Response:', errorText);
+    throw new Error(`Alternative API error! status: ${response.status}, message: ${errorText}`);
+  }
+
+  const result = await response.json();
+  console.log('📋 Background: Alternative API response received');
+  
+  // Transform alternative API format to our expected format
+  if (!result || !Array.isArray(result)) {
+    console.error('❌ Background: Invalid response structure from alternative API:', result);
+    throw new Error('No transcript content found in alternative API response');
+  }
+  
+  // Alternative API format: [{ text, start, duration }]
+  const transcript = result.map(segment => ({
+    text: segment.text,
+    start: segment.start, // Already in seconds
+    duration: segment.duration || 5 // Default duration if not provided
+  }));
+  
+  console.log('✅ Background: Successfully processed alternative API transcript');
+  console.log(`✅ Background: ${transcript.length} transcript segments processed`);
+  
+  return transcript;
+}
+
+// Extract transcript from Supadata API (existing method)
+async function extractTranscriptFromSupadata(videoId, currentUrl) {
+  console.log('📋 Background: Extracting transcript from Supadata API...');
+  
+  // Get Supadata token from storage
+  const tokenResult = await chrome.storage.local.get(['supadataToken']);
+  const supadataToken = tokenResult.supadataToken;
+  
+  if (!supadataToken) {
+    throw new Error('Supadata API token not configured. Please set your token in the extension settings.');
+  }
+  
+  // Build the API URL with query parameters and force English language
+  const apiUrl = new URL('https://api.supadata.ai/v1/youtube/transcript');
+  apiUrl.searchParams.append('url', currentUrl);
+  apiUrl.searchParams.append('lang', 'en'); // Force English language
+  
+  console.log('📡 Background: Making GET request to:', apiUrl.toString());
+  console.log('🇺🇸 Background: Forcing English language transcript');
+  
+  const response = await fetch(apiUrl.toString(), {
+    method: 'GET',
+    headers: {
+      'x-api-key': supadataToken,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  console.log('📡 Background: Response status:', response.status);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('❌ Background: API Error Response:', errorText);
+    
+    // If English transcript is not available, try without language parameter as fallback
+    if (response.status === 404 || errorText.includes('language') || errorText.includes('transcript')) {
+      console.log('🔄 Background: English transcript not available, trying auto-detect...');
+      
+      // Retry without language parameter
+      const fallbackUrl = new URL('https://api.supadata.ai/v1/youtube/transcript');
+      fallbackUrl.searchParams.append('url', currentUrl);
+      
+      const fallbackResponse = await fetch(fallbackUrl.toString(), {
+        method: 'GET',
+        headers: {
+          'x-api-key': supadataToken,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!fallbackResponse.ok) {
+        const fallbackErrorText = await fallbackResponse.text();
+        throw new Error(`No transcript available. Status: ${fallbackResponse.status}, message: ${fallbackErrorText}`);
+      }
+      
+      const fallbackResult = await fallbackResponse.json();
+      console.log('📋 Background: Fallback transcript received');
+      console.log('📋 Background: Language:', fallbackResult.lang);
+      
+      // Check if the fallback transcript is in English
+      if (fallbackResult.lang && fallbackResult.lang.toLowerCase() !== 'en') {
+        console.warn('⚠️ Background: Video transcript is not in English. Language detected:', fallbackResult.lang);
+        console.warn('⚠️ Background: Proceeding with non-English transcript - results may be less accurate');
+      }
+      
+      return processSupadataTranscriptResponse(fallbackResult);
+    }
+    
+    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+  }
+
+  const result = await response.json();
+  console.log('📋 Background: English transcript API Response received');
+  console.log('📋 Background: Language:', result.lang);
+  console.log('📋 Background: Available languages:', result.availableLangs);
+  
+  // Verify we got English transcript
+  if (result.lang && result.lang.toLowerCase() !== 'en') {
+    console.warn('⚠️ Background: Expected English but got:', result.lang);
+    console.warn('⚠️ Background: Proceeding anyway - results may be less accurate');
+  } else {
+    console.log('✅ Background: Confirmed English transcript received');
+  }
+  
+  return processSupadataTranscriptResponse(result);
+}
+
+// Helper function to process Supadata transcript response
+function processSupadataTranscriptResponse(result) {
   // Extract transcript from the 'content' array in Supadata response
   if (!result.content || !Array.isArray(result.content)) {
     console.error('❌ Background: Invalid response structure - no content array:', result);
@@ -389,7 +514,7 @@ function processTranscriptResponse(result) {
     duration: segment.duration / 1000 // Convert milliseconds to seconds (for reference)
   }));
   
-  console.log('✅ Background: Successfully processed transcript');
+  console.log('✅ Background: Successfully processed Supadata transcript');
   console.log(`✅ Background: ${transcript.length} transcript segments processed`);
   console.log('📋 Background: Sample transformed segment:', transcript[0]);
   
