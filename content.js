@@ -35,135 +35,273 @@ async function getTranscript() {
   }
 }
 
-// NEW: Enhanced DOM transcript extraction with better waiting and error handling
+// NEW: Enhanced DOM transcript extraction based on your example
 async function extractTranscriptFromDOM() {
-  console.log('📋 Content: Starting DOM transcript extraction...');
-  
   try {
-    // First, try to find existing transcript elements
-    let transcriptElements = document.querySelectorAll('ytd-transcript-segment-renderer');
+    console.log('🔍 Content: Searching for transcript data in DOM...');
     
-    if (transcriptElements.length === 0) {
-      console.log('📋 Content: No transcript elements found, trying to open transcript panel...');
+    // Method 1: Try to get transcript from the transcript panel if it's open
+    const transcriptSegments = document.querySelectorAll('ytd-transcript-segment-renderer');
+    
+    if (transcriptSegments.length > 0) {
+      console.log('✅ Content: Found transcript segments in DOM');
+      const transcript = Array.from(transcriptSegments).map(segment => {
+        // Try multiple selectors for timestamp and text
+        const timeElement = segment.querySelector('.segment-timestamp, [class*="timestamp"]');
+        const textElement = segment.querySelector('.segment-text, [class*="segment-text"]');
+        
+        const timestamp = timeElement ? timeElement.textContent.trim() : '';
+        const text = textElement ? textElement.textContent.trim() : '';
+        
+        return {
+          timestamp: timestamp,
+          text: text,
+          start: parseTimestampToSeconds(timestamp)
+        };
+      }).filter(item => item.text); // Remove empty entries
       
-      // Try to find and click the transcript button
-      const transcriptButton = await findTranscriptButton();
-      if (transcriptButton) {
-        console.log('📋 Content: Found transcript button, clicking...');
-        transcriptButton.click();
-        
-        // Wait for transcript panel to load
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Try again to find transcript elements
-        transcriptElements = document.querySelectorAll('ytd-transcript-segment-renderer');
+      console.log('✅ Content: Successfully extracted transcript from DOM segments');
+      console.log(`📋 Content: ${transcript.length} segments found`);
+      return transcript;
+    }
+    
+    // Method 2: Try to extract from ytInitialPlayerResponse or other YouTube data objects
+    let transcriptData = null;
+    
+    // Check for ytInitialPlayerResponse
+    if (window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.captions) {
+      const captions = window.ytInitialPlayerResponse.captions;
+      if (captions.playerCaptionsTracklistRenderer && captions.playerCaptionsTracklistRenderer.captionTracks) {
+        transcriptData = captions.playerCaptionsTracklistRenderer.captionTracks[0];
       }
     }
     
-    if (transcriptElements.length === 0) {
-      console.log('📋 Content: Still no transcript elements, waiting longer...');
-      
-      // Wait up to 10 seconds for transcript elements to appear
-      transcriptElements = await waitForTranscriptElements();
+    // Fallback: Search in script tags for caption data
+    if (!transcriptData) {
+      const scripts = document.querySelectorAll('script');
+      for (let script of scripts) {
+        const content = script.textContent;
+        if (content.includes('captionTracks') || content.includes('playerCaptionsTracklistRenderer')) {
+          // Try to find caption tracks in various formats
+          const patterns = [
+            /"captionTracks":\s*(\[.*?\])/,
+            /"playerCaptionsTracklistRenderer":\s*\{[^}]*"captionTracks":\s*(\[.*?\])/,
+            /captionTracks['"]\s*:\s*(\[.*?\])/
+          ];
+          
+          for (let pattern of patterns) {
+            const match = content.match(pattern);
+            if (match) {
+              try {
+                const captionTracks = JSON.parse(match[1]);
+                if (captionTracks.length > 0) {
+                  transcriptData = captionTracks[0];
+                  break;
+                }
+              } catch (e) {
+                continue;
+              }
+            }
+          }
+          if (transcriptData) break;
+        }
+      }
     }
     
-    if (transcriptElements.length === 0) {
-      throw new Error('Transcript elements not found. Please open the transcript panel manually and try again.');
+    if (transcriptData && transcriptData.baseUrl) {
+      console.log('✅ Content: Found caption track URL');
+      console.log('🔗 Content: Caption URL:', transcriptData.baseUrl);
+      
+      // Try to fetch transcript from caption URL
+      try {
+        const transcript = await fetchTranscriptFromCaptionUrl(transcriptData.baseUrl);
+        if (transcript && transcript.length > 0) {
+          console.log('✅ Content: Successfully fetched transcript from caption URL');
+          return transcript;
+        }
+      } catch (error) {
+        console.warn('⚠️ Content: Failed to fetch from caption URL:', error);
+      }
     }
     
-    console.log(`📋 Content: Found ${transcriptElements.length} transcript segments`);
+    // Method 3: Try to find and click transcript button
+    const transcriptButtons = [
+      'button[aria-label*="transcript" i]',
+      'button[aria-label*="Show transcript" i]',
+      'ytd-button-renderer[button-text*="transcript" i]',
+      '[role="button"][aria-label*="transcript" i]',
+      'tp-yt-paper-button[aria-label*="transcript" i]',
+      // More specific selectors for YouTube's structure
+      'ytd-menu-renderer button[aria-label*="transcript" i]',
+      'ytd-watch-flexy button[aria-label*="transcript" i]',
+      // Additional selectors for different YouTube layouts
+      'ytd-video-description-transcript-section-renderer button',
+      'ytd-structured-description-content-renderer button[aria-label*="transcript" i]'
+    ];
     
-    // Extract transcript data
-    const transcriptData = Array.from(transcriptElements).map(segment => {
-      const timestampElement = segment.querySelector('div.segment-timestamp');
-      const textElement = segment.querySelector('yt-formatted-string.segment-text');
-      
-      const timestampText = timestampElement ? timestampElement.textContent.trim() : '0:00';
-      const text = textElement ? textElement.textContent.trim() : '';
-      
-      // Convert timestamp to seconds
-      const timeInSeconds = parseTimestampToSeconds(timestampText);
-      
-      return {
-        text: text,
-        start: timeInSeconds,
-        duration: 5 // Default duration
-      };
-    }).filter(segment => segment.text.length > 0);
-    
-    if (transcriptData.length === 0) {
-      throw new Error('No valid transcript text found in DOM elements.');
+    let transcriptButton = null;
+    for (let selector of transcriptButtons) {
+      transcriptButton = document.querySelector(selector);
+      if (transcriptButton) {
+        console.log(`📝 Content: Found transcript button with selector: ${selector}`);
+        break;
+      }
     }
     
-    console.log(`✅ Content: Successfully extracted ${transcriptData.length} transcript segments from DOM`);
-    console.log('📋 Content: Sample segment:', transcriptData[0]);
+    // Also try to find by text content
+    if (!transcriptButton) {
+      const allButtons = document.querySelectorAll('button, [role="button"]');
+      for (let button of allButtons) {
+        const text = button.textContent.toLowerCase();
+        if (text.includes('transcript') || text.includes('show transcript')) {
+          transcriptButton = button;
+          console.log('📝 Content: Found transcript button by text content');
+          break;
+        }
+      }
+    }
     
-    return transcriptData;
+    if (transcriptButton) {
+      console.log('🖱️ Content: Clicking transcript button...');
+      transcriptButton.click();
+      
+      // Wait for transcript panel to load
+      console.log('⏳ Content: Waiting for transcript panel to load...');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Try again to get transcript segments
+      const newTranscriptSegments = document.querySelectorAll('ytd-transcript-segment-renderer');
+      if (newTranscriptSegments.length > 0) {
+        console.log('✅ Content: Found transcript segments after clicking button');
+        const transcript = Array.from(newTranscriptSegments).map(segment => {
+          const timeElement = segment.querySelector('.segment-timestamp, [class*="timestamp"]');
+          const textElement = segment.querySelector('.segment-text, [class*="segment-text"]');
+          
+          const timestamp = timeElement ? timeElement.textContent.trim() : '';
+          const text = textElement ? textElement.textContent.trim() : '';
+          
+          return {
+            timestamp: timestamp,
+            text: text,
+            start: parseTimestampToSeconds(timestamp)
+          };
+        }).filter(item => item.text);
+        
+        if (transcript.length > 0) {
+          console.log('✅ Content: Successfully extracted transcript after button click');
+          return transcript;
+        }
+      }
+      
+      throw new Error('Transcript button clicked but no transcript segments found. Please wait a moment and try again.');
+    }
+    
+    // Method 4: Look for any existing transcript-related elements in the DOM
+    const possibleTranscriptSelectors = [
+      'ytd-transcript-body-renderer',
+      '[data-transcript]',
+      '.transcript-text',
+      '.caption-line',
+      // YouTube-specific selectors
+      'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] ytd-transcript-segment-renderer',
+      '#panels ytd-transcript-segment-renderer'
+    ];
+    
+    for (let selector of possibleTranscriptSelectors) {
+      const elements = document.querySelectorAll(selector);
+      if (elements.length > 0) {
+        console.log(`✅ Content: Found transcript elements with selector: ${selector}`);
+        
+        // For transcript body renderer, look for segments inside
+        if (selector.includes('body-renderer') || selector.includes('engagement-panel')) {
+          const segments = document.querySelectorAll('ytd-transcript-segment-renderer');
+          if (segments.length > 0) {
+            const transcript = Array.from(segments).map(segment => {
+              const timeElement = segment.querySelector('[class*="timestamp"], .segment-timestamp');
+              const textElement = segment.querySelector('[class*="text"], .segment-text');
+              
+              const timestamp = timeElement ? timeElement.textContent.trim() : '';
+              const text = textElement ? textElement.textContent.trim() : '';
+              
+              return {
+                timestamp: timestamp,
+                text: text,
+                start: parseTimestampToSeconds(timestamp)
+              };
+            }).filter(item => item.text && item.text.length > 0);
+            
+            if (transcript.length > 0) {
+              console.log('✅ Content: Successfully extracted transcript from DOM elements');
+              return transcript;
+            }
+          }
+        }
+      }
+    }
+    
+    // Method 5: Check for closed captions in video player
+    const player = document.querySelector('#movie_player, .video-stream, video');
+    if (player && player.getSubtitlesUserSettings) {
+      try {
+        console.log('🎬 Content: Found video player, checking for subtitle settings...');
+        const subtitleSettings = player.getSubtitlesUserSettings();
+        if (subtitleSettings) {
+          console.log('✅ Content: Found subtitle settings in video player');
+          // This method doesn't provide actual transcript text, just settings
+        }
+      } catch (e) {
+        console.log('⚠️ Content: Unable to access video player subtitle settings');
+      }
+    }
+    
+    throw new Error('No transcript found. The video may not have captions available, or the transcript panel needs to be opened manually. Please try: 1) Make sure the video has CC available, 2) Manually click "Show transcript" button, 3) Refresh the page and try again.');
     
   } catch (error) {
-    console.error('❌ Content: Error extracting DOM transcript:', error);
+    console.error('❌ Content: Error in DOM transcript extraction:', error);
     throw error;
   }
 }
 
-// NEW: Helper function to find transcript button
-async function findTranscriptButton() {
-  // Common selectors for transcript button
-  const selectors = [
-    'button[aria-label*="transcript" i]',
-    'button[aria-label*="Show transcript" i]',
-    'button[title*="transcript" i]',
-    'yt-button-renderer[aria-label*="transcript" i]',
-    '[role="button"][aria-label*="transcript" i]'
-  ];
-  
-  for (const selector of selectors) {
-    const button = document.querySelector(selector);
-    if (button) {
-      console.log('📋 Content: Found transcript button with selector:', selector);
-      return button;
-    }
-  }
-  
-  // Try to find by text content
-  const buttons = document.querySelectorAll('button, [role="button"]');
-  for (const button of buttons) {
-    const text = button.textContent?.toLowerCase() || '';
-    const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+// NEW: Helper function to fetch transcript from caption URL
+async function fetchTranscriptFromCaptionUrl(captionUrl) {
+  try {
+    console.log('🌐 Content: Fetching transcript from caption URL...');
+    const response = await fetch(captionUrl);
+    const xmlText = await response.text();
     
-    if (text.includes('transcript') || ariaLabel.includes('transcript')) {
-      console.log('📋 Content: Found transcript button by text content');
-      return button;
-    }
+    // Parse the XML response
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+    const textElements = xmlDoc.querySelectorAll('text');
+    
+    const transcript = Array.from(textElements).map(element => {
+      const start = element.getAttribute('start');
+      const duration = element.getAttribute('dur');
+      const text = element.textContent;
+      
+      // Convert seconds to timestamp format
+      const startSeconds = parseFloat(start);
+      const minutes = Math.floor(startSeconds / 60);
+      const seconds = Math.floor(startSeconds % 60);
+      const timestamp = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+      
+      return {
+        timestamp: timestamp,
+        text: text.trim(),
+        start: startSeconds,
+        duration: parseFloat(duration) || 5
+      };
+    });
+    
+    console.log('✅ Content: Successfully fetched transcript from caption URL');
+    return transcript;
+  } catch (error) {
+    console.error('❌ Content: Failed to fetch transcript from caption URL:', error);
+    throw error;
   }
-  
-  console.log('📋 Content: No transcript button found');
-  return null;
 }
 
-// NEW: Enhanced waiting function with better timeout handling
-async function waitForTranscriptElements(maxWaitTime = 10000) {
-  console.log('📋 Content: Waiting for transcript elements to load...');
-  
-  const startTime = Date.now();
-  
-  while (Date.now() - startTime < maxWaitTime) {
-    const elements = document.querySelectorAll('ytd-transcript-segment-renderer');
-    
-    if (elements.length > 0) {
-      console.log(`📋 Content: Found ${elements.length} transcript elements after ${Date.now() - startTime}ms`);
-      return elements;
-    }
-    
-    // Wait 500ms before checking again
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-  
-  console.log('📋 Content: Timeout waiting for transcript elements');
-  return document.querySelectorAll('ytd-transcript-segment-renderer'); // Return empty NodeList
-}
-
-// NEW: Helper function to parse timestamp to seconds
+// NEW: Helper function to parse timestamp string to seconds
 function parseTimestampToSeconds(timestamp) {
   if (!timestamp || typeof timestamp !== 'string') return 0;
   
@@ -301,58 +439,6 @@ async function getCachedAnalysis(videoId) {
   }
 }
 
-// NEW: Function to get cached analysis from Supabase
-async function getCachedAnalysisFromSupabase(videoId) {
-  try {
-    console.log('🔍 Checking Supabase cache for video:', videoId);
-    
-    if (!window.SupabaseDB) {
-      console.log('📋 Supabase not available, skipping cache check');
-      return null;
-    }
-    
-    const stats = await window.SupabaseDB.getVideoStats(videoId);
-    
-    if (stats && stats.lies && stats.lies.length > 0) {
-      console.log('✅ Found cached analysis in Supabase:', stats.lies.length, 'lies');
-      
-      // Convert Supabase format to our expected format
-      const lies = stats.lies.map(lie => ({
-        timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
-        timeInSeconds: lie.timestamp_seconds,
-        duration: lie.duration_seconds || 10,
-        claim: lie.claim_text,
-        explanation: lie.explanation,
-        confidence: lie.confidence,
-        severity: lie.severity,
-        category: lie.category || 'other'
-      }));
-      
-      // Store for download
-      storeDetectedLiesForDownload(lies, videoId);
-      
-      // Create cache-like object
-      return {
-        analysis: `✅ Analysis loaded from Supabase cache!\n\nFound ${lies.length} lies with enhanced precision.`,
-        claims: lies,
-        timestamp: Date.now(),
-        videoId: videoId,
-        processed: stats.analysis?.created_at || Date.now(),
-        version: '2.1',
-        lastUpdated: Date.now(),
-        source: 'supabase'
-      };
-    }
-    
-    console.log('📋 No cached analysis found in Supabase');
-    return null;
-    
-  } catch (error) {
-    console.error('❌ Error checking Supabase cache:', error);
-    return null;
-  }
-}
-
 // Function to save analysis results to cache
 async function saveAnalysisToCache(videoId, analysisText, lies = []) {
   try {
@@ -382,76 +468,6 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     
   } catch (error) {
     console.error('Error saving analysis to cache:', error);
-  }
-}
-
-// NEW: Function to save analysis results to Supabase
-async function saveAnalysisToSupabase(videoId, analysisText, lies = []) {
-  try {
-    console.log('💾 Saving analysis to Supabase for video:', videoId);
-    
-    if (!window.SupabaseDB) {
-      console.log('📋 Supabase not available, skipping save');
-      return;
-    }
-    
-    // Get video title from page
-    const videoTitle = document.querySelector('h1.ytd-video-primary-info-renderer')?.textContent?.trim() || 'Unknown Video';
-    const channelName = document.querySelector('#text.ytd-channel-name a')?.textContent?.trim() || 'Unknown Channel';
-    
-    // Get video duration from page
-    let videoDuration = 0;
-    const durationElement = document.querySelector('.ytp-time-duration');
-    if (durationElement) {
-      const durationText = durationElement.textContent.trim();
-      videoDuration = parseTimestampToSeconds(durationText);
-    }
-    
-    // Create or update video record
-    const videoData = {
-      video_id: videoId,
-      title: videoTitle,
-      channel_name: channelName,
-      duration: videoDuration
-    };
-    
-    const video = await window.SupabaseDB.upsertVideo(videoData);
-    console.log('📹 Video record saved:', video);
-    
-    // Create analysis record
-    const analysisData = {
-      video_id: video.id,
-      analysis_version: '2.1',
-      total_lies_detected: lies.length,
-      analysis_duration_minutes: 20, // Default analysis duration
-      confidence_threshold: 0.85
-    };
-    
-    const analysis = await window.SupabaseDB.createVideoAnalysis(analysisData);
-    console.log('📊 Analysis record saved:', analysis);
-    
-    // Save detected lies
-    if (lies.length > 0) {
-      const liesData = lies.map(lie => ({
-        analysis_id: analysis.id,
-        timestamp_seconds: lie.timeInSeconds || 0,
-        duration_seconds: lie.duration || 10,
-        claim_text: lie.claim || '',
-        explanation: lie.explanation || '',
-        confidence: lie.confidence || 0.85,
-        severity: lie.severity || 'medium',
-        category: lie.category || 'other'
-      }));
-      
-      const savedLies = await window.SupabaseDB.createDetectedLies(liesData);
-      console.log('🚨 Lies saved to Supabase:', savedLies.length);
-    }
-    
-    console.log('✅ Analysis successfully saved to Supabase');
-    
-  } catch (error) {
-    console.error('❌ Error saving analysis to Supabase:', error);
-    // Don't throw error - this is optional functionality
   }
 }
 
@@ -956,7 +972,102 @@ async function updateSessionStats(newLies = []) {
   }
 }
 
-// NEW: Enhanced main function to process video with automatic cache checking and Supabase integration
+// NEW: Auto-load lies when navigating to YouTube videos
+async function autoLoadVideoLies() {
+  try {
+    const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
+    if (!videoId) {
+      console.log('🎬 Content: No video ID found in URL');
+      return;
+    }
+
+    console.log('🎬 Content: Auto-loading lies for video:', videoId);
+
+    // Check local cache first
+    const cachedAnalysis = await getCachedAnalysis(videoId);
+    if (cachedAnalysis && cachedAnalysis.claims && cachedAnalysis.claims.length > 0) {
+      console.log('📋 Content: Found cached lies, loading immediately');
+      
+      // Store lies for download
+      storeDetectedLiesForDownload(cachedAnalysis.claims, videoId);
+      
+      // Send lies update to popup
+      chrome.runtime.sendMessage({
+        type: 'liesUpdate',
+        claims: cachedAnalysis.claims,
+        videoId: videoId,
+        isComplete: true
+      });
+      
+      // Start skip mode if enabled
+      const settings = await chrome.storage.sync.get(['detectionMode']);
+      if (settings.detectionMode === 'skip') {
+        currentVideoLies = cachedAnalysis.claims;
+        startSkipModeMonitoring();
+      }
+      
+      console.log('✅ Content: Auto-loaded lies from cache');
+      return;
+    }
+
+    // Check Supabase database if available
+    if (window.SupabaseDB) {
+      try {
+        console.log('🔍 Content: Checking Supabase for video analysis...');
+        const videoStats = await window.SupabaseDB.getVideoStats(videoId);
+        
+        if (videoStats && videoStats.lies && videoStats.lies.length > 0) {
+          console.log('📊 Content: Found lies in Supabase database');
+          
+          // Transform Supabase lies to our format
+          const transformedLies = videoStats.lies.map(lie => ({
+            timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
+            timeInSeconds: lie.timestamp_seconds,
+            duration: lie.duration_seconds || 10,
+            claim: lie.claim_text,
+            explanation: lie.explanation,
+            confidence: lie.confidence,
+            severity: lie.severity,
+            category: lie.category || 'other'
+          }));
+          
+          // Store in local cache for faster future access
+          await saveAnalysisToCache(videoId, 'Analysis loaded from database', transformedLies);
+          
+          // Store lies for download
+          storeDetectedLiesForDownload(transformedLies, videoId);
+          
+          // Send lies update to popup
+          chrome.runtime.sendMessage({
+            type: 'liesUpdate',
+            claims: transformedLies,
+            videoId: videoId,
+            isComplete: true
+          });
+          
+          // Start skip mode if enabled
+          const settings = await chrome.storage.sync.get(['detectionMode']);
+          if (settings.detectionMode === 'skip') {
+            currentVideoLies = transformedLies;
+            startSkipModeMonitoring();
+          }
+          
+          console.log('✅ Content: Auto-loaded lies from Supabase database');
+          return;
+        }
+      } catch (dbError) {
+        console.warn('⚠️ Content: Error checking Supabase database:', dbError);
+      }
+    }
+
+    console.log('📭 Content: No existing lies found for this video');
+
+  } catch (error) {
+    console.error('❌ Content: Error in auto-load lies:', error);
+  }
+}
+
+// Enhanced main function to process video with full transcript analysis
 async function processVideo() {
   try {
     const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
@@ -977,31 +1088,19 @@ async function processVideo() {
       videoId: videoId
     });
 
-    // Check for cached analysis first (local cache)
+    // Check for cached analysis first
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'cache_check',
-      message: 'Checking local cache...'
+      message: 'Checking for cached analysis...'
     });
 
-    let cachedAnalysis = await getCachedAnalysis(videoId);
-    
-    // If no local cache, check Supabase cache
-    if (!cachedAnalysis) {
-      chrome.runtime.sendMessage({
-        type: 'analysisProgress',
-        stage: 'cache_check',
-        message: 'Checking Supabase cache...'
-      });
-      
-      cachedAnalysis = await getCachedAnalysisFromSupabase(videoId);
-    }
-    
+    const cachedAnalysis = await getCachedAnalysis(videoId);
     if (cachedAnalysis) {
       chrome.runtime.sendMessage({
         type: 'analysisProgress',
         stage: 'cache_found',
-        message: `Loading cached analysis results... (${cachedAnalysis.source || 'local'} cache)`
+        message: 'Loading cached analysis results...'
       });
       
       // Send cached lies for real-time display
@@ -1112,9 +1211,8 @@ async function processVideo() {
       finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
     }
 
-    // Save final analysis to both local cache and Supabase
+    // Save final analysis to cache
     await saveAnalysisToCache(videoId, finalAnalysis, allLies);
-    await saveAnalysisToSupabase(videoId, finalAnalysis, allLies);
     
     // Update session stats with improved time calculation
     await updateSessionStats(allLies);
@@ -1144,60 +1242,6 @@ async function processVideo() {
     } catch (msgError) {
       console.error('Error sending message:', msgError);
     }
-  }
-}
-
-// NEW: Function to automatically load lies when video changes
-async function autoLoadVideoLies() {
-  try {
-    const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
-    if (!videoId) {
-      return;
-    }
-
-    console.log('🔄 Auto-loading lies for video:', videoId);
-
-    // Check local cache first
-    let cachedAnalysis = await getCachedAnalysis(videoId);
-    
-    // If no local cache, check Supabase
-    if (!cachedAnalysis) {
-      cachedAnalysis = await getCachedAnalysisFromSupabase(videoId);
-    }
-    
-    if (cachedAnalysis && cachedAnalysis.claims && cachedAnalysis.claims.length > 0) {
-      console.log('✅ Auto-loaded lies from cache:', cachedAnalysis.claims.length);
-      
-      // Store lies for download
-      storeDetectedLiesForDownload(cachedAnalysis.claims, videoId);
-      
-      // Send lies update to popup
-      chrome.runtime.sendMessage({
-        type: 'liesUpdate',
-        claims: cachedAnalysis.claims,
-        videoId: videoId,
-        isComplete: true
-      });
-      
-      // Start skip mode if enabled
-      const settings = await chrome.storage.sync.get(['detectionMode']);
-      if (settings.detectionMode === 'skip') {
-        currentVideoLies = cachedAnalysis.claims;
-        startSkipModeMonitoring();
-      }
-    } else {
-      console.log('📋 No cached lies found for video:', videoId);
-      // Clear any existing lies
-      chrome.runtime.sendMessage({
-        type: 'liesUpdate',
-        claims: [],
-        videoId: videoId,
-        isComplete: true
-      });
-    }
-    
-  } catch (error) {
-    console.error('❌ Error auto-loading video lies:', error);
   }
 }
 
@@ -1350,20 +1394,17 @@ function checkAndSkipLies() {
         url.searchParams.set('t', Math.floor(skipToTime) + 's');
         window.history.replaceState({}, '', url.toString());
         
-        // Calculate actual skipped time
-        const actualSkippedTime = Math.round(skipToTime - currentTime);
-        
         showSkipNotification(lie, lieDuration);
         
-        // Send lie skip tracking message to background for stats
+        // Notify background script for stats tracking
         chrome.runtime.sendMessage({
           type: 'lieSkipped',
           lie: lie,
-          actualSkippedTime: actualSkippedTime,
-          skippedAt: Date.now()
+          duration: lieDuration,
+          timestamp: currentTime
         });
         
-        console.log(`✅ Skip mode: Successfully skipped to ${skipToTime}s (skipped ${actualSkippedTime}s)`);
+        console.log(`✅ Skip mode: Successfully skipped to ${skipToTime}s (after ${lieDuration}s lie)`);
         console.log(`✅ Skip mode: Total lies skipped this session: ${skippedLiesInSession.size}`);
         
         break;
@@ -1461,7 +1502,7 @@ function updateDetectionMode(mode) {
   }
 }
 
-// Listen for messages from popup and background
+// Listen for messages from popup and background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'startAnalysis') {
     processVideo();
@@ -1476,7 +1517,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     updateDetectionMode(message.mode);
     sendResponse({ success: true });
   } else if (message.type === 'extractDOMTranscript') {
-    // Handle DOM transcript extraction request from background
+    // NEW: Handle DOM transcript extraction request from background script
     extractTranscriptFromDOM()
       .then(transcript => {
         sendResponse({ success: true, data: transcript });
@@ -1519,11 +1560,11 @@ function handlePageNavigation() {
     // Clear previous video data objects
     window.LieBlockerDetectedLies = null;
     
-    // Auto-load lies for new video
+    // NEW: Auto-load lies for the new video
     if (currentVideoId) {
       setTimeout(() => {
         autoLoadVideoLies();
-      }, 1000); // Wait a bit for page to stabilize
+      }, 1000); // Wait 1 second for page to stabilize
     }
   }
 }
@@ -1541,13 +1582,11 @@ new MutationObserver(() => {
 }).observe(document, { subtree: true, childList: true });
 
 // Initialize on page load
-document.addEventListener('DOMContentLoaded', () => {
-  handlePageNavigation();
-});
+handlePageNavigation();
 
-// Also initialize immediately if DOM is already loaded
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', handlePageNavigation);
-} else {
-  handlePageNavigation();
+// NEW: Auto-load lies when content script first loads
+if (isYouTubeVideoPage()) {
+  setTimeout(() => {
+    autoLoadVideoLies();
+  }, 2000); // Wait 2 seconds for page to fully load
 }

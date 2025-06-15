@@ -225,7 +225,6 @@ function setupAnalysisDurationSlider() {
 }
 
 async function loadSettings() {
-  
   try {
     const settings = await chrome.storage.sync.get([
       'detectionMode', 'globalSensitivity', 'aiProvider', 'openaiModel', 'geminiModel', 'analysisDuration', 'transcriptProvider'
@@ -233,14 +232,8 @@ async function loadSettings() {
     
     // Load transcript provider setting
     const transcriptProviderSelect = document.getElementById('transcript-provider');
-    if (transcriptProviderSelect && settings.transcriptProvider) {
-      transcriptProviderSelect.value = settings.transcriptProvider;
-    } else if (transcriptProviderSelect) {
-      // Set default to DOM
-      const defaultProvider = 'dom';
-      transcriptProviderSelect.value = defaultProvider;
-      // Save the default setting
-      await chrome.storage.sync.set({ transcriptProvider: defaultProvider });
+    if (transcriptProviderSelect) {
+      transcriptProviderSelect.value = settings.transcriptProvider || 'dom'; // Default to DOM
     }
     
     // Load analysis duration setting
@@ -516,7 +509,7 @@ function setupEventListeners() {
     transcriptProviderSelect.addEventListener('change', async (e) => {
       const provider = e.target.value;
       await chrome.storage.sync.set({ transcriptProvider: provider });
-      showNotification('Transcript provider updated', 'success');
+      showNotification(`Transcript provider set to: ${provider}`, 'success');
     });
   }
   
@@ -770,12 +763,12 @@ async function analyzeCurrentVideo() {
       return;
     }
     
-    // Check transcript provider and validate accordingly
+    // Check transcript provider setting
     const settings = await chrome.storage.sync.get(['transcriptProvider']);
     const transcriptProvider = settings.transcriptProvider || 'dom';
     
+    // Check if required API tokens are configured based on transcript provider
     if (transcriptProvider === 'supadata') {
-      // Check if Supadata token is configured
       const supadataResult = await chrome.storage.local.get(['supadataToken']);
       if (!supadataResult.supadataToken) {
         showNotification('Please configure your Supadata API token first', 'error');
@@ -814,7 +807,7 @@ async function analyzeCurrentVideo() {
         showNotification('Please refresh the page and try again', 'error');
         resetAnalysisUI();
       } else {
-        showNotification('Full video analysis started! Watch for real-time progress updates.', 'info');
+        showNotification(`Full video analysis started using ${transcriptProvider.toUpperCase()} transcript extraction!`, 'info');
       }
     });
     
@@ -932,9 +925,29 @@ async function updateVideoStatsImmediate(videoId, title) {
       
       updateProgressIndicator('complete', 'Analysis available');
     } else {
-      updateProgressIndicator('idle', 'Not analyzed');
-      updateLiesIndicator([]); // Clear lies indicator
-      currentVideoLies = []; // Clear lies
+      // Check background script for current video lies
+      try {
+        const response = await chrome.runtime.sendMessage({ 
+          type: 'getCurrentVideoLies', 
+          videoId: videoId 
+        });
+        
+        if (response && response.success && response.lies && response.lies.length > 0) {
+          console.log('📊 Found lies in background script:', response.lies.length);
+          currentVideoLies = response.lies;
+          updateLiesIndicator(response.lies);
+          updateProgressIndicator('complete', 'Analysis available');
+        } else {
+          updateProgressIndicator('idle', 'Not analyzed');
+          updateLiesIndicator([]); // Clear lies indicator
+          currentVideoLies = []; // Clear lies
+        }
+      } catch (bgError) {
+        console.warn('Could not check background script for lies:', bgError);
+        updateProgressIndicator('idle', 'Not analyzed');
+        updateLiesIndicator([]); // Clear lies indicator
+        currentVideoLies = []; // Clear lies
+      }
     }
     
     // Update download links availability
@@ -1161,7 +1174,10 @@ async function clearCache() {
     // Also clear background analysis state and session statistics
     const backgroundStateKeys = ['backgroundAnalysisState', 'sessionStats', 'totalStats', 'userFeedback'];
     
-    const keysToRemove = [...analysisKeys, ...backgroundStateKeys];
+    // Clear current video lies keys
+    const videoLiesKeys = Object.keys(allData).filter(key => key.startsWith('currentVideoLies_'));
+    
+    const keysToRemove = [...analysisKeys, ...backgroundStateKeys, ...videoLiesKeys];
     
     if (keysToRemove.length > 0) {
       // Remove all cache entries, background state, and statistics
@@ -1411,35 +1427,11 @@ function setupRealTimeUpdates() {
     }
     
     if (message.type === 'lieSkipped') {
-      // Handle lie skip tracking for accurate stats
-      handleLieSkipped(message);
+      // Handle lie skip notifications
+      console.log('⏭️ Popup: Lie skipped:', message);
+      // Could update UI to show skip stats if needed
     }
   });
-}
-
-// NEW: Handle lie skip tracking for accurate time saved calculation
-function handleLieSkipped(message) {
-  console.log('⏭️ Popup: Lie skipped:', message);
-  
-  // Update session stats with actual skipped time
-  if (message.actualSkippedTime > 0) {
-    currentStats.timeSaved += message.actualSkippedTime;
-    
-    // Update UI immediately
-    const timeSaved = currentStats.timeSaved;
-    if (timeSaved >= 60) {
-      const minutes = Math.floor(timeSaved / 60);
-      const seconds = timeSaved % 60;
-      updateStatElement('time-saved', seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`);
-    } else {
-      updateStatElement('time-saved', `${timeSaved}s`);
-    }
-    
-    // Save updated stats
-    chrome.storage.local.set({ sessionStats: currentStats });
-    
-    showNotification(`⏭️ Skipped ${message.actualSkippedTime}s lie at ${message.lie.timestamp}`, 'info', 3000);
-  }
 }
 
 // Handle real-time progress updates with visual cues
