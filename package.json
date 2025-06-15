@@ -1,0 +1,17 @@
+{
+  "name": "lieblocker-extension",
+  "version": "1.0.0",
+  "description": "AI-powered fact-checking for YouTube videos with Supabase integration",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0"
+  }
+}

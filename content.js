@@ -125,38 +125,118 @@ function formatSecondsToTimestamp(seconds) {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Function to get cached analysis results
+// Function to get cached analysis results from Supabase
 async function getCachedAnalysis(videoId) {
   try {
-    const result = await chrome.storage.local.get(`analysis_${videoId}`);
-    const cached = result[`analysis_${videoId}`];
+    // Import Supabase client
+    const { db } = await import('./lib/supabase.js');
     
-    if (cached) {
-      // Check if cache is still valid (24 hours)
-      const cacheAge = Date.now() - cached.timestamp;
-      const maxAge = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+    // Get video analysis from Supabase
+    const videoStats = await db.getVideoStats(videoId);
+    
+    if (videoStats && videoStats.analysis) {
+      console.log('📊 Found cached analysis in Supabase:', videoStats);
       
-      if (cacheAge < maxAge) {
-        // Create LieBlockerDetectedLies object from cached data
-        if (cached.claims && cached.claims.length > 0) {
-          storeDetectedLiesForDownload(cached.claims, videoId);
-        }
-        
-        return cached;
-      } else {
-        // Remove expired cache
-        chrome.storage.local.remove(`analysis_${videoId}`);
+      // Transform Supabase data to match expected format
+      const cached = {
+        analysis: `✅ Analysis loaded from Supabase!\n\nFound ${videoStats.totalLies} lies in this video.`,
+        claims: videoStats.lies.map(lie => ({
+          timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
+          timeInSeconds: lie.timestamp_seconds,
+          duration: lie.duration_seconds,
+          claim: lie.claim_text,
+          explanation: lie.explanation,
+          confidence: lie.confidence,
+          severity: lie.severity
+        })),
+        timestamp: new Date(videoStats.analysis.created_at).getTime(),
+        videoId: videoId,
+        version: videoStats.analysis.analysis_version
+      };
+      
+      // Create LieBlockerDetectedLies object from cached data
+      if (cached.claims && cached.claims.length > 0) {
+        storeDetectedLiesForDownload(cached.claims, videoId);
       }
+      
+      return cached;
     }
     
     return null;
   } catch (error) {
-    console.error('Error retrieving cached analysis:', error);
+    console.error('Error retrieving cached analysis from Supabase:', error);
     return null;
   }
 }
 
-// Function to save analysis results to cache
+// Function to save analysis results to Supabase
+async function saveAnalysisToSupabase(videoId, analysisText, lies = [], videoTitle = '', channelName = '') {
+  try {
+    // Import Supabase client
+    const { db } = await import('./lib/supabase.js');
+    
+    console.log('💾 Saving analysis to Supabase...');
+    
+    // 1. Create or update video record
+    const videoData = {
+      video_id: videoId,
+      title: videoTitle,
+      channel_name: channelName,
+      duration: null // We could get this from the video element if needed
+    };
+    
+    const video = await db.upsertVideo(videoData);
+    console.log('📹 Video record created/updated:', video);
+    
+    // 2. Create video analysis record
+    const analysisData = {
+      video_id: video.id,
+      analysis_version: '2.1',
+      total_lies_detected: lies.length,
+      analysis_duration_minutes: 20, // Get from settings if needed
+      confidence_threshold: 0.85
+    };
+    
+    const analysis = await db.createVideoAnalysis(analysisData);
+    console.log('📊 Analysis record created:', analysis);
+    
+    // 3. Create detected lies records
+    if (lies.length > 0) {
+      const liesData = lies.map(lie => ({
+        analysis_id: analysis.id,
+        timestamp_seconds: lie.timeInSeconds,
+        duration_seconds: lie.duration,
+        claim_text: lie.claim,
+        explanation: lie.explanation,
+        confidence: lie.confidence,
+        severity: lie.severity,
+        category: lie.category || 'other'
+      }));
+      
+      const savedLies = await db.createDetectedLies(liesData);
+      console.log('🚨 Lies records created:', savedLies.length);
+    }
+    
+    // Store detected lies for download
+    storeDetectedLiesForDownload(lies, videoId);
+    
+    // Notify popup of cache update
+    chrome.runtime.sendMessage({
+      type: 'cacheUpdated',
+      videoId: videoId,
+      totalClaims: lies.length
+    });
+    
+    console.log('✅ Successfully saved analysis to Supabase');
+    
+  } catch (error) {
+    console.error('❌ Error saving analysis to Supabase:', error);
+    // Fallback to local storage if Supabase fails
+    await saveAnalysisToCache(videoId, analysisText, lies);
+  }
+}
+
+// Keep local cache as fallback
 async function saveAnalysisToCache(videoId, analysisText, lies = []) {
   try {
     const cacheData = {
@@ -701,6 +781,10 @@ async function processVideo() {
       return;
     }
 
+    // Get video title and channel name for Supabase
+    const videoTitle = document.querySelector('h1.ytd-video-primary-info-renderer')?.textContent?.trim() || '';
+    const channelName = document.querySelector('#text.ytd-channel-name a')?.textContent?.trim() || '';
+
     // Initialize empty LieBlockerDetectedLies object immediately
     storeDetectedLiesForDownload([], videoId);
 
@@ -710,7 +794,7 @@ async function processVideo() {
       videoId: videoId
     });
 
-    // Check for cached analysis first
+    // Check for cached analysis first (now from Supabase)
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'cache_check',
@@ -744,7 +828,7 @@ async function processVideo() {
       // Display cache results
       chrome.runtime.sendMessage({
         type: 'analysisResult',
-        data: cachedAnalysis.analysis + '\n\nAnalysis loaded from cache!'
+        data: cachedAnalysis.analysis + '\n\nAnalysis loaded from Supabase!'
       });
       return;
     }
@@ -831,8 +915,8 @@ async function processVideo() {
       finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
     }
 
-    // Save final analysis to cache
-    await saveAnalysisToCache(videoId, finalAnalysis, allLies);
+    // Save final analysis to Supabase (with fallback to local cache)
+    await saveAnalysisToSupabase(videoId, finalAnalysis, allLies, videoTitle, channelName);
     
     // Update session stats with improved time calculation
     await updateSessionStats(allLies);
