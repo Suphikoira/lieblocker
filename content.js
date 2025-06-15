@@ -1,84 +1,3 @@
-// NEW: Function to extract transcript from DOM (default method)
-async function extractTranscriptFromDOM() {
-  console.log('📋 Content: Extracting transcript from DOM...');
-  
-  try {
-    // Wait for transcript to be available
-    await waitForTranscriptElements();
-    
-    const transcriptSelector = 'ytd-transcript-segment-renderer';
-    const transcriptElements = document.querySelectorAll(transcriptSelector);
-
-    if (transcriptElements.length === 0) {
-      throw new Error('⚠️ Transcript not found. Make sure the transcript is visible on the page.');
-    }
-
-    console.log(`📋 Content: Found ${transcriptElements.length} transcript segments`);
-
-    const transcriptSegments = Array.from(transcriptElements).map(segment => {
-      const timestampElement = segment.querySelector('div.segment-timestamp');
-      const textElement = segment.querySelector('yt-formatted-string.segment-text');
-
-      const timestampText = timestampElement ? timestampElement.textContent.trim() : '0:00';
-      const text = textElement ? textElement.textContent.trim() : '';
-
-      // Convert timestamp to seconds
-      const timeInSeconds = parseTimestampToSeconds(timestampText);
-
-      return {
-        text: text,
-        start: timeInSeconds,
-        duration: 5 // Default duration for DOM extraction
-      };
-    }).filter(segment => segment.text); // Remove empty segments
-
-    console.log('✅ Content: Successfully extracted DOM transcript');
-    console.log(`✅ Content: ${transcriptSegments.length} valid segments processed`);
-    console.log('📋 Content: Sample segment:', transcriptSegments[0]);
-
-    return transcriptSegments;
-
-  } catch (error) {
-    console.error('❌ Content: Error extracting DOM transcript:', error);
-    throw error;
-  }
-}
-
-// Helper function to wait for transcript elements to load
-async function waitForTranscriptElements(maxWaitTime = 10000) {
-  const startTime = Date.now();
-  
-  while (Date.now() - startTime < maxWaitTime) {
-    const transcriptElements = document.querySelectorAll('ytd-transcript-segment-renderer');
-    if (transcriptElements.length > 0) {
-      console.log('📋 Content: Transcript elements found');
-      return true;
-    }
-    
-    // Wait 500ms before checking again
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-  
-  throw new Error('Transcript elements not found within timeout period. Please open the transcript panel manually.');
-}
-
-// Helper function to parse timestamp string to seconds
-function parseTimestampToSeconds(timestamp) {
-  if (!timestamp || typeof timestamp !== 'string') return 0;
-  
-  const parts = timestamp.split(':').map(part => parseInt(part, 10));
-  
-  if (parts.length === 2) {
-    // MM:SS format
-    return parts[0] * 60 + parts[1];
-  } else if (parts.length === 3) {
-    // H:MM:SS format
-    return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  }
-  
-  return 0;
-}
-
 // Function to extract YouTube video transcript via background script
 async function getTranscript() {
   const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
@@ -114,6 +33,151 @@ async function getTranscript() {
     }
     return null;
   }
+}
+
+// NEW: Enhanced DOM transcript extraction with better waiting and error handling
+async function extractTranscriptFromDOM() {
+  console.log('📋 Content: Starting DOM transcript extraction...');
+  
+  try {
+    // First, try to find existing transcript elements
+    let transcriptElements = document.querySelectorAll('ytd-transcript-segment-renderer');
+    
+    if (transcriptElements.length === 0) {
+      console.log('📋 Content: No transcript elements found, trying to open transcript panel...');
+      
+      // Try to find and click the transcript button
+      const transcriptButton = await findTranscriptButton();
+      if (transcriptButton) {
+        console.log('📋 Content: Found transcript button, clicking...');
+        transcriptButton.click();
+        
+        // Wait for transcript panel to load
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Try again to find transcript elements
+        transcriptElements = document.querySelectorAll('ytd-transcript-segment-renderer');
+      }
+    }
+    
+    if (transcriptElements.length === 0) {
+      console.log('📋 Content: Still no transcript elements, waiting longer...');
+      
+      // Wait up to 10 seconds for transcript elements to appear
+      transcriptElements = await waitForTranscriptElements();
+    }
+    
+    if (transcriptElements.length === 0) {
+      throw new Error('Transcript elements not found. Please open the transcript panel manually and try again.');
+    }
+    
+    console.log(`📋 Content: Found ${transcriptElements.length} transcript segments`);
+    
+    // Extract transcript data
+    const transcriptData = Array.from(transcriptElements).map(segment => {
+      const timestampElement = segment.querySelector('div.segment-timestamp');
+      const textElement = segment.querySelector('yt-formatted-string.segment-text');
+      
+      const timestampText = timestampElement ? timestampElement.textContent.trim() : '0:00';
+      const text = textElement ? textElement.textContent.trim() : '';
+      
+      // Convert timestamp to seconds
+      const timeInSeconds = parseTimestampToSeconds(timestampText);
+      
+      return {
+        text: text,
+        start: timeInSeconds,
+        duration: 5 // Default duration
+      };
+    }).filter(segment => segment.text.length > 0);
+    
+    if (transcriptData.length === 0) {
+      throw new Error('No valid transcript text found in DOM elements.');
+    }
+    
+    console.log(`✅ Content: Successfully extracted ${transcriptData.length} transcript segments from DOM`);
+    console.log('📋 Content: Sample segment:', transcriptData[0]);
+    
+    return transcriptData;
+    
+  } catch (error) {
+    console.error('❌ Content: Error extracting DOM transcript:', error);
+    throw error;
+  }
+}
+
+// NEW: Helper function to find transcript button
+async function findTranscriptButton() {
+  // Common selectors for transcript button
+  const selectors = [
+    'button[aria-label*="transcript" i]',
+    'button[aria-label*="Show transcript" i]',
+    'button[title*="transcript" i]',
+    'yt-button-renderer[aria-label*="transcript" i]',
+    '[role="button"][aria-label*="transcript" i]'
+  ];
+  
+  for (const selector of selectors) {
+    const button = document.querySelector(selector);
+    if (button) {
+      console.log('📋 Content: Found transcript button with selector:', selector);
+      return button;
+    }
+  }
+  
+  // Try to find by text content
+  const buttons = document.querySelectorAll('button, [role="button"]');
+  for (const button of buttons) {
+    const text = button.textContent?.toLowerCase() || '';
+    const ariaLabel = button.getAttribute('aria-label')?.toLowerCase() || '';
+    
+    if (text.includes('transcript') || ariaLabel.includes('transcript')) {
+      console.log('📋 Content: Found transcript button by text content');
+      return button;
+    }
+  }
+  
+  console.log('📋 Content: No transcript button found');
+  return null;
+}
+
+// NEW: Enhanced waiting function with better timeout handling
+async function waitForTranscriptElements(maxWaitTime = 10000) {
+  console.log('📋 Content: Waiting for transcript elements to load...');
+  
+  const startTime = Date.now();
+  
+  while (Date.now() - startTime < maxWaitTime) {
+    const elements = document.querySelectorAll('ytd-transcript-segment-renderer');
+    
+    if (elements.length > 0) {
+      console.log(`📋 Content: Found ${elements.length} transcript elements after ${Date.now() - startTime}ms`);
+      return elements;
+    }
+    
+    // Wait 500ms before checking again
+    await new Promise(resolve => setTimeout(resolve, 500));
+  }
+  
+  console.log('📋 Content: Timeout waiting for transcript elements');
+  return document.querySelectorAll('ytd-transcript-segment-renderer'); // Return empty NodeList
+}
+
+// NEW: Helper function to parse timestamp to seconds
+function parseTimestampToSeconds(timestamp) {
+  if (!timestamp || typeof timestamp !== 'string') return 0;
+  
+  const parts = timestamp.split(':').map(part => parseInt(part, 10));
+  
+  if (parts.length === 2) {
+    // MM:SS format
+    return parts[0] * 60 + parts[1];
+  } else if (parts.length === 3) {
+    // H:MM:SS format
+    return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  }
+  
+  return 0;
 }
 
 // Function to prepare full transcript for analysis with configurable duration and enhanced mapping
@@ -206,45 +270,9 @@ function formatSecondsToTimestamp(seconds) {
   return `${minutes}:${secs.toString().padStart(2, '0')}`;
 }
 
-// Function to get cached analysis results from Supabase with fallback to local storage
+// Function to get cached analysis results
 async function getCachedAnalysis(videoId) {
   try {
-    // First try Supabase
-    if (window.SupabaseDB) {
-      console.log('🔍 Checking Supabase for cached analysis...');
-      const videoStats = await window.SupabaseDB.getVideoStats(videoId);
-      
-      if (videoStats && videoStats.analysis) {
-        console.log('📊 Found cached analysis in Supabase:', videoStats);
-        
-        // Transform Supabase data to match expected format
-        const cached = {
-          analysis: `✅ Analysis loaded from Supabase!\n\nFound ${videoStats.totalLies} lies in this video.`,
-          claims: videoStats.lies.map(lie => ({
-            timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
-            timeInSeconds: lie.timestamp_seconds,
-            duration: lie.duration_seconds,
-            claim: lie.claim_text,
-            explanation: lie.explanation,
-            confidence: lie.confidence,
-            severity: lie.severity
-          })),
-          timestamp: new Date(videoStats.analysis.created_at).getTime(),
-          videoId: videoId,
-          version: videoStats.analysis.analysis_version
-        };
-        
-        // Create LieBlockerDetectedLies object from cached data
-        if (cached.claims && cached.claims.length > 0) {
-          storeDetectedLiesForDownload(cached.claims, videoId);
-        }
-        
-        return cached;
-      }
-    }
-    
-    // Fallback to local storage
-    console.log('🔍 Checking local storage for cached analysis...');
     const result = await chrome.storage.local.get(`analysis_${videoId}`);
     const cached = result[`analysis_${videoId}`];
     
@@ -268,114 +296,64 @@ async function getCachedAnalysis(videoId) {
     
     return null;
   } catch (error) {
-    console.error('Error retrieving cached analysis from Supabase:', error);
-    
-    // Fallback to local storage if Supabase fails
-    try {
-      console.log('🔍 Fallback: Checking local storage for cached analysis...');
-      const result = await chrome.storage.local.get(`analysis_${videoId}`);
-      const cached = result[`analysis_${videoId}`];
-      
-      if (cached) {
-        const cacheAge = Date.now() - cached.timestamp;
-        const maxAge = 24 * 60 * 60 * 1000;
-        
-        if (cacheAge < maxAge) {
-          if (cached.claims && cached.claims.length > 0) {
-            storeDetectedLiesForDownload(cached.claims, videoId);
-          }
-          return cached;
-        } else {
-          chrome.storage.local.remove(`analysis_${videoId}`);
-        }
-      }
-    } catch (localError) {
-      console.error('Error retrieving cached analysis from local storage:', localError);
-    }
-    
+    console.error('Error retrieving cached analysis:', error);
     return null;
   }
 }
 
-// Function to save analysis results to Supabase with fallback to local storage
-async function saveAnalysisToSupabase(videoId, analysisText, lies = [], videoTitle = '', channelName = '') {
+// NEW: Function to get cached analysis from Supabase
+async function getCachedAnalysisFromSupabase(videoId) {
   try {
+    console.log('🔍 Checking Supabase cache for video:', videoId);
+    
     if (!window.SupabaseDB) {
-      console.log('⚠️ Supabase not available, falling back to local storage');
-      await saveAnalysisToCache(videoId, analysisText, lies);
-      return;
+      console.log('📋 Supabase not available, skipping cache check');
+      return null;
     }
     
-    console.log('💾 Saving analysis to Supabase...');
+    const stats = await window.SupabaseDB.getVideoStats(videoId);
     
-    // 1. Create or update video record
-    const videoData = {
-      video_id: videoId,
-      title: videoTitle,
-      channel_name: channelName,
-      duration: null // We could get this from the video element if needed
-    };
-    
-    const video = await window.SupabaseDB.upsertVideo(videoData);
-    console.log('📹 Video record created/updated:', video);
-    
-    // 2. Create video analysis record
-    const analysisData = {
-      video_id: video.id,
-      analysis_version: '2.1',
-      total_lies_detected: lies.length,
-      analysis_duration_minutes: 20, // Get from settings if needed
-      confidence_threshold: 0.85
-    };
-    
-    const analysis = await window.SupabaseDB.createVideoAnalysis(analysisData);
-    console.log('📊 Analysis record created:', analysis);
-    
-    // 3. Create detected lies records
-    if (lies.length > 0) {
-      const liesData = lies.map(lie => ({
-        analysis_id: analysis.id,
-        timestamp_seconds: lie.timeInSeconds,
-        duration_seconds: lie.duration,
-        claim_text: lie.claim,
+    if (stats && stats.lies && stats.lies.length > 0) {
+      console.log('✅ Found cached analysis in Supabase:', stats.lies.length, 'lies');
+      
+      // Convert Supabase format to our expected format
+      const lies = stats.lies.map(lie => ({
+        timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
+        timeInSeconds: lie.timestamp_seconds,
+        duration: lie.duration_seconds || 10,
+        claim: lie.claim_text,
         explanation: lie.explanation,
         confidence: lie.confidence,
         severity: lie.severity,
         category: lie.category || 'other'
       }));
       
-      const savedLies = await window.SupabaseDB.createDetectedLies(liesData);
-      console.log('🚨 Lies records created:', savedLies.length);
+      // Store for download
+      storeDetectedLiesForDownload(lies, videoId);
+      
+      // Create cache-like object
+      return {
+        analysis: `✅ Analysis loaded from Supabase cache!\n\nFound ${lies.length} lies with enhanced precision.`,
+        claims: lies,
+        timestamp: Date.now(),
+        videoId: videoId,
+        processed: stats.analysis?.created_at || Date.now(),
+        version: '2.1',
+        lastUpdated: Date.now(),
+        source: 'supabase'
+      };
     }
     
-    // Store detected lies for download
-    storeDetectedLiesForDownload(lies, videoId);
-    
-    // NEW: Send lies update to background for persistence
-    chrome.runtime.sendMessage({
-      type: 'liesUpdate',
-      claims: lies,
-      videoId: videoId,
-      isComplete: true
-    });
-    
-    // Notify popup of cache update
-    chrome.runtime.sendMessage({
-      type: 'cacheUpdated',
-      videoId: videoId,
-      totalClaims: lies.length
-    });
-    
-    console.log('✅ Successfully saved analysis to Supabase');
+    console.log('📋 No cached analysis found in Supabase');
+    return null;
     
   } catch (error) {
-    console.error('❌ Error saving analysis to Supabase:', error);
-    // Fallback to local storage if Supabase fails
-    await saveAnalysisToCache(videoId, analysisText, lies);
+    console.error('❌ Error checking Supabase cache:', error);
+    return null;
   }
 }
 
-// Keep local cache as fallback
+// Function to save analysis results to cache
 async function saveAnalysisToCache(videoId, analysisText, lies = []) {
   try {
     const cacheData = {
@@ -395,23 +373,85 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     // Store detected lies for download
     storeDetectedLiesForDownload(lies, videoId);
     
-    // NEW: Send lies update to background for persistence
-    chrome.runtime.sendMessage({
-      type: 'liesUpdate',
-      claims: lies,
-      videoId: videoId,
-      isComplete: true
-    });
-    
     // Notify popup of cache update
     chrome.runtime.sendMessage({
       type: 'cacheUpdated',
       videoId: videoId,
-      totalClaims: lies.length
+      totalClaims: cacheData.claims.length
     });
     
   } catch (error) {
     console.error('Error saving analysis to cache:', error);
+  }
+}
+
+// NEW: Function to save analysis results to Supabase
+async function saveAnalysisToSupabase(videoId, analysisText, lies = []) {
+  try {
+    console.log('💾 Saving analysis to Supabase for video:', videoId);
+    
+    if (!window.SupabaseDB) {
+      console.log('📋 Supabase not available, skipping save');
+      return;
+    }
+    
+    // Get video title from page
+    const videoTitle = document.querySelector('h1.ytd-video-primary-info-renderer')?.textContent?.trim() || 'Unknown Video';
+    const channelName = document.querySelector('#text.ytd-channel-name a')?.textContent?.trim() || 'Unknown Channel';
+    
+    // Get video duration from page
+    let videoDuration = 0;
+    const durationElement = document.querySelector('.ytp-time-duration');
+    if (durationElement) {
+      const durationText = durationElement.textContent.trim();
+      videoDuration = parseTimestampToSeconds(durationText);
+    }
+    
+    // Create or update video record
+    const videoData = {
+      video_id: videoId,
+      title: videoTitle,
+      channel_name: channelName,
+      duration: videoDuration
+    };
+    
+    const video = await window.SupabaseDB.upsertVideo(videoData);
+    console.log('📹 Video record saved:', video);
+    
+    // Create analysis record
+    const analysisData = {
+      video_id: video.id,
+      analysis_version: '2.1',
+      total_lies_detected: lies.length,
+      analysis_duration_minutes: 20, // Default analysis duration
+      confidence_threshold: 0.85
+    };
+    
+    const analysis = await window.SupabaseDB.createVideoAnalysis(analysisData);
+    console.log('📊 Analysis record saved:', analysis);
+    
+    // Save detected lies
+    if (lies.length > 0) {
+      const liesData = lies.map(lie => ({
+        analysis_id: analysis.id,
+        timestamp_seconds: lie.timeInSeconds || 0,
+        duration_seconds: lie.duration || 10,
+        claim_text: lie.claim || '',
+        explanation: lie.explanation || '',
+        confidence: lie.confidence || 0.85,
+        severity: lie.severity || 'medium',
+        category: lie.category || 'other'
+      }));
+      
+      const savedLies = await window.SupabaseDB.createDetectedLies(liesData);
+      console.log('🚨 Lies saved to Supabase:', savedLies.length);
+    }
+    
+    console.log('✅ Analysis successfully saved to Supabase');
+    
+  } catch (error) {
+    console.error('❌ Error saving analysis to Supabase:', error);
+    // Don't throw error - this is optional functionality
   }
 }
 
@@ -884,8 +924,8 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
   }
 }
 
-// NEW: Function to update session stats with accurate skip tracking
-async function updateSessionStats(newLies = [], actualSkippedTime = 0) {
+// Function to update session stats with improved time saved calculation
+async function updateSessionStats(newLies = []) {
   try {
     const stats = await chrome.storage.local.get(['sessionStats']);
     const currentStats = stats.sessionStats || {
@@ -899,11 +939,12 @@ async function updateSessionStats(newLies = [], actualSkippedTime = 0) {
     currentStats.liesDetected += newLies.length;
     currentStats.highSeverity += newLies.filter(c => c.severity === 'high').length;
     
-    // NEW: Only add time saved if it was actually skipped
-    if (actualSkippedTime > 0) {
-      currentStats.timeSaved += actualSkippedTime;
-      console.log('📊 Added actual skipped time to stats:', actualSkippedTime, 'seconds');
-    }
+    // Calculate actual time saved based on lie durations
+    const actualTimeSaved = newLies.reduce((total, lie) => {
+      return total + (lie.duration || 10); // Use actual duration or default to 10 seconds
+    }, 0);
+    
+    currentStats.timeSaved += actualTimeSaved;
     
     await chrome.storage.local.set({ sessionStats: currentStats });
     
@@ -915,26 +956,7 @@ async function updateSessionStats(newLies = [], actualSkippedTime = 0) {
   }
 }
 
-// NEW: Function to initialize skip mode with lies (works for both fresh analysis and cached results)
-async function initializeSkipMode(lies, videoId) {
-  try {
-    console.log('🚀 Initializing skip mode with', lies.length, 'lies for video:', videoId);
-    
-    // Check if skip mode is enabled
-    const settings = await chrome.storage.sync.get(['detectionMode']);
-    if (settings.detectionMode === 'skip' && lies.length > 0) {
-      console.log('⏭️ Skip mode enabled, starting monitoring...');
-      currentVideoLies = lies;
-      startSkipModeMonitoring();
-    } else {
-      console.log('⏭️ Skip mode disabled or no lies to skip');
-    }
-  } catch (error) {
-    console.error('Error initializing skip mode:', error);
-  }
-}
-
-// Enhanced main function to process video with full transcript analysis
+// NEW: Enhanced main function to process video with automatic cache checking and Supabase integration
 async function processVideo() {
   try {
     const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
@@ -946,10 +968,6 @@ async function processVideo() {
       return;
     }
 
-    // Get video title and channel name for Supabase
-    const videoTitle = document.querySelector('h1.ytd-video-primary-info-renderer')?.textContent?.trim() || '';
-    const channelName = document.querySelector('#text.ytd-channel-name a')?.textContent?.trim() || '';
-
     // Initialize empty LieBlockerDetectedLies object immediately
     storeDetectedLiesForDownload([], videoId);
 
@@ -959,19 +977,31 @@ async function processVideo() {
       videoId: videoId
     });
 
-    // Check for cached analysis first (now from Supabase)
+    // Check for cached analysis first (local cache)
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'cache_check',
-      message: 'Checking for cached analysis...'
+      message: 'Checking local cache...'
     });
 
-    const cachedAnalysis = await getCachedAnalysis(videoId);
+    let cachedAnalysis = await getCachedAnalysis(videoId);
+    
+    // If no local cache, check Supabase cache
+    if (!cachedAnalysis) {
+      chrome.runtime.sendMessage({
+        type: 'analysisProgress',
+        stage: 'cache_check',
+        message: 'Checking Supabase cache...'
+      });
+      
+      cachedAnalysis = await getCachedAnalysisFromSupabase(videoId);
+    }
+    
     if (cachedAnalysis) {
       chrome.runtime.sendMessage({
         type: 'analysisProgress',
         stage: 'cache_found',
-        message: 'Loading cached analysis results...'
+        message: `Loading cached analysis results... (${cachedAnalysis.source || 'local'} cache)`
       });
       
       // Send cached lies for real-time display
@@ -983,14 +1013,18 @@ async function processVideo() {
           isComplete: true
         });
         
-        // NEW: Initialize skip mode with cached lies
-        await initializeSkipMode(cachedAnalysis.claims, videoId);
+        // Start skip mode monitoring if skip mode is enabled
+        const settings = await chrome.storage.sync.get(['detectionMode']);
+        if (settings.detectionMode === 'skip') {
+          currentVideoLies = cachedAnalysis.claims;
+          startSkipModeMonitoring();
+        }
       }
       
       // Display cache results
       chrome.runtime.sendMessage({
         type: 'analysisResult',
-        data: cachedAnalysis.analysis + '\n\nAnalysis loaded from Supabase!'
+        data: cachedAnalysis.analysis + '\n\nAnalysis loaded from cache!'
       });
       return;
     }
@@ -1078,11 +1112,12 @@ async function processVideo() {
       finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
     }
 
-    // Save final analysis to Supabase (with fallback to local cache)
-    await saveAnalysisToSupabase(videoId, finalAnalysis, allLies, videoTitle, channelName);
+    // Save final analysis to both local cache and Supabase
+    await saveAnalysisToCache(videoId, finalAnalysis, allLies);
+    await saveAnalysisToSupabase(videoId, finalAnalysis, allLies);
     
-    // Update session stats with NO automatic time saved (only when actually skipped)
-    await updateSessionStats(allLies, 0);
+    // Update session stats with improved time calculation
+    await updateSessionStats(allLies);
     
     // Clean old cache entries
     await cleanOldCache();
@@ -1092,8 +1127,12 @@ async function processVideo() {
       data: finalAnalysis
     });
 
-    // NEW: Initialize skip mode with fresh analysis results
-    await initializeSkipMode(allLies, videoId);
+    // Start skip mode monitoring if skip mode is enabled and lies were found
+    const detectionSettings = await chrome.storage.sync.get(['detectionMode']);
+    if (detectionSettings.detectionMode === 'skip' && allLies.length > 0) {
+      currentVideoLies = allLies;
+      startSkipModeMonitoring();
+    }
 
   } catch (error) {
     console.error('Error in processVideo:', error);
@@ -1108,28 +1147,31 @@ async function processVideo() {
   }
 }
 
-// NEW: Automatic video detection and lie data loading
-async function autoDetectAndLoadVideo() {
+// NEW: Function to automatically load lies when video changes
+async function autoLoadVideoLies() {
   try {
     const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
     if (!videoId) {
-      console.log('🎬 No video ID found in URL');
       return;
     }
 
-    console.log('🎬 Auto-detecting video:', videoId);
-    
-    // Initialize empty LieBlockerDetectedLies object immediately
-    storeDetectedLiesForDownload([], videoId);
+    console.log('🔄 Auto-loading lies for video:', videoId);
 
-    // Check for cached analysis from Supabase
-    console.log('🔍 Auto-checking for cached analysis...');
-    const cachedAnalysis = await getCachedAnalysis(videoId);
+    // Check local cache first
+    let cachedAnalysis = await getCachedAnalysis(videoId);
     
-    if (cachedAnalysis && cachedAnalysis.claims) {
-      console.log('✅ Found cached analysis with', cachedAnalysis.claims.length, 'lies');
+    // If no local cache, check Supabase
+    if (!cachedAnalysis) {
+      cachedAnalysis = await getCachedAnalysisFromSupabase(videoId);
+    }
+    
+    if (cachedAnalysis && cachedAnalysis.claims && cachedAnalysis.claims.length > 0) {
+      console.log('✅ Auto-loaded lies from cache:', cachedAnalysis.claims.length);
       
-      // Send lies update to background and popup
+      // Store lies for download
+      storeDetectedLiesForDownload(cachedAnalysis.claims, videoId);
+      
+      // Send lies update to popup
       chrome.runtime.sendMessage({
         type: 'liesUpdate',
         claims: cachedAnalysis.claims,
@@ -1137,20 +1179,15 @@ async function autoDetectAndLoadVideo() {
         isComplete: true
       });
       
-      // Initialize skip mode with cached lies
-      await initializeSkipMode(cachedAnalysis.claims, videoId);
-      
-      // Notify that data is loaded
-      chrome.runtime.sendMessage({
-        type: 'analysisResult',
-        data: `✅ Lie data loaded automatically!\n\nFound ${cachedAnalysis.claims.length} lies in this video from previous analysis.\n\nSkip mode is ${currentVideoLies.length > 0 ? 'ready' : 'disabled'}.`
-      });
-      
-      console.log('✅ Auto-loaded lie data for video:', videoId);
+      // Start skip mode if enabled
+      const settings = await chrome.storage.sync.get(['detectionMode']);
+      if (settings.detectionMode === 'skip') {
+        currentVideoLies = cachedAnalysis.claims;
+        startSkipModeMonitoring();
+      }
     } else {
-      console.log('📭 No cached analysis found for video:', videoId);
-      
-      // Clear any existing lies data
+      console.log('📋 No cached lies found for video:', videoId);
+      // Clear any existing lies
       chrome.runtime.sendMessage({
         type: 'liesUpdate',
         claims: [],
@@ -1160,7 +1197,7 @@ async function autoDetectAndLoadVideo() {
     }
     
   } catch (error) {
-    console.error('❌ Error in auto-detection:', error);
+    console.error('❌ Error auto-loading video lies:', error);
   }
 }
 
@@ -1313,17 +1350,20 @@ function checkAndSkipLies() {
         url.searchParams.set('t', Math.floor(skipToTime) + 's');
         window.history.replaceState({}, '', url.toString());
         
+        // Calculate actual skipped time
+        const actualSkippedTime = Math.round(skipToTime - currentTime);
+        
         showSkipNotification(lie, lieDuration);
         
-        // NEW: Send skip tracking to background for accurate stats
+        // Send lie skip tracking message to background for stats
         chrome.runtime.sendMessage({
           type: 'lieSkipped',
           lie: lie,
-          actualSkippedTime: lieDuration,
-          videoId: new URLSearchParams(window.location.href.split('?')[1]).get('v')
+          actualSkippedTime: actualSkippedTime,
+          skippedAt: Date.now()
         });
         
-        console.log(`✅ Skip mode: Successfully skipped to ${skipToTime}s (after ${lieDuration}s lie)`);
+        console.log(`✅ Skip mode: Successfully skipped to ${skipToTime}s (skipped ${actualSkippedTime}s)`);
         console.log(`✅ Skip mode: Total lies skipped this session: ${skippedLiesInSession.size}`);
         
         break;
@@ -1421,23 +1461,9 @@ function updateDetectionMode(mode) {
   }
 }
 
-// NEW: Enhanced message listener with ping response
+// Listen for messages from popup and background
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'ping') {
-    // Respond to ping to indicate content script is ready
-    sendResponse({ ready: true });
-    return true;
-  } else if (message.type === 'extractDOMTranscript') {
-    // NEW: Handle DOM transcript extraction request
-    extractTranscriptFromDOM()
-      .then(transcript => {
-        sendResponse({ success: true, data: transcript });
-      })
-      .catch(error => {
-        sendResponse({ success: false, error: error.message });
-      });
-    return true; // Keep message channel open for async response
-  } else if (message.type === 'startAnalysis') {
+  if (message.type === 'startAnalysis') {
     processVideo();
     sendResponse({ success: true });
   } else if (message.type === 'getCurrentTimestamp') {
@@ -1449,6 +1475,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === 'updateDetectionMode') {
     updateDetectionMode(message.mode);
     sendResponse({ success: true });
+  } else if (message.type === 'extractDOMTranscript') {
+    // Handle DOM transcript extraction request from background
+    extractTranscriptFromDOM()
+      .then(transcript => {
+        sendResponse({ success: true, data: transcript });
+      })
+      .catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    return true; // Keep message channel open for async response
   }
   return true;
 });
@@ -1483,12 +1519,11 @@ function handlePageNavigation() {
     // Clear previous video data objects
     window.LieBlockerDetectedLies = null;
     
-    // NEW: Auto-detect and load lie data for new video
-    if (currentVideoId && isYouTubeVideoPage()) {
-      console.log('🎬 Auto-detecting new video:', currentVideoId);
+    // Auto-load lies for new video
+    if (currentVideoId) {
       setTimeout(() => {
-        autoDetectAndLoadVideo();
-      }, 2000); // Wait 2 seconds for page to stabilize
+        autoLoadVideoLies();
+      }, 1000); // Wait a bit for page to stabilize
     }
   }
 }
@@ -1506,23 +1541,13 @@ new MutationObserver(() => {
 }).observe(document, { subtree: true, childList: true });
 
 // Initialize on page load
-handlePageNavigation();
+document.addEventListener('DOMContentLoaded', () => {
+  handlePageNavigation();
+});
 
-// Wait for Supabase client to load before processing
-setTimeout(() => {
-  if (window.SupabaseDB) {
-    console.log('✅ Supabase client ready for content script');
-    
-    // Auto-detect current video on initial load
-    if (isYouTubeVideoPage()) {
-      autoDetectAndLoadVideo();
-    }
-  } else {
-    console.warn('⚠️ Supabase client not available, using local storage fallback');
-    
-    // Still try auto-detection with local storage
-    if (isYouTubeVideoPage()) {
-      autoDetectAndLoadVideo();
-    }
-  }
-}, 1000);
+// Also initialize immediately if DOM is already loaded
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', handlePageNavigation);
+} else {
+  handlePageNavigation();
+}
