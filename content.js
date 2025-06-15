@@ -187,7 +187,31 @@ async function getCachedAnalysis(videoId) {
     
     return null;
   } catch (error) {
-    console.error('Error retrieving cached analysis:', error);
+    console.error('Error retrieving cached analysis from Supabase:', error);
+    
+    // Fallback to local storage if Supabase fails
+    try {
+      console.log('🔍 Fallback: Checking local storage for cached analysis...');
+      const result = await chrome.storage.local.get(`analysis_${videoId}`);
+      const cached = result[`analysis_${videoId}`];
+      
+      if (cached) {
+        const cacheAge = Date.now() - cached.timestamp;
+        const maxAge = 24 * 60 * 60 * 1000;
+        
+        if (cacheAge < maxAge) {
+          if (cached.claims && cached.claims.length > 0) {
+            storeDetectedLiesForDownload(cached.claims, videoId);
+          }
+          return cached;
+        } else {
+          chrome.storage.local.remove(`analysis_${videoId}`);
+        }
+      }
+    } catch (localError) {
+      console.error('Error retrieving cached analysis from local storage:', localError);
+    }
+    
     return null;
   }
 }
@@ -795,24 +819,6 @@ async function updateSessionStats(newLies = []) {
   }
 }
 
-// Load Supabase client when content script loads
-(async function loadSupabaseClient() {
-  try {
-    // Create a script element to load Supabase
-    const script = document.createElement('script');
-    script.src = chrome.runtime.getURL('lib/supabase.js');
-    script.onload = () => {
-      console.log('✅ Supabase client loaded successfully');
-    };
-    script.onerror = (error) => {
-      console.warn('⚠️ Failed to load Supabase client, using local storage fallback:', error);
-    };
-    document.head.appendChild(script);
-  } catch (error) {
-    console.warn('⚠️ Failed to load Supabase client, using local storage fallback:', error);
-  }
-})();
-
 // Enhanced main function to process video with full transcript analysis
 async function processVideo() {
   try {
@@ -1306,3 +1312,12 @@ new MutationObserver(() => {
 
 // Initialize on page load
 handlePageNavigation();
+
+// Wait for Supabase client to load before processing
+setTimeout(() => {
+  if (window.SupabaseDB) {
+    console.log('✅ Supabase client ready for content script');
+  } else {
+    console.warn('⚠️ Supabase client not available, using local storage fallback');
+  }
+}, 1000);
