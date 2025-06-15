@@ -13,6 +13,10 @@ let analysisState = {
   stage: 'idle'
 };
 
+// NEW: Persistent lies storage for current video
+let currentVideoLies = [];
+let currentVideoId = null;
+
 // Persistent state management
 async function saveAnalysisState() {
   try {
@@ -24,6 +28,47 @@ async function saveAnalysisState() {
     });
   } catch (error) {
     console.error('Error saving analysis state:', error);
+  }
+}
+
+// NEW: Save current video lies persistently
+async function saveCurrentVideoLies(videoId, lies) {
+  try {
+    await chrome.storage.local.set({
+      [`currentVideoLies_${videoId}`]: {
+        lies: lies,
+        timestamp: Date.now(),
+        videoId: videoId
+      }
+    });
+    console.log('💾 Saved current video lies to storage:', lies.length);
+  } catch (error) {
+    console.error('Error saving current video lies:', error);
+  }
+}
+
+// NEW: Load current video lies from storage
+async function loadCurrentVideoLies(videoId) {
+  try {
+    const result = await chrome.storage.local.get([`currentVideoLies_${videoId}`]);
+    const stored = result[`currentVideoLies_${videoId}`];
+    
+    if (stored && stored.lies) {
+      // Check if data is recent (within 24 hours)
+      const dataAge = Date.now() - (stored.timestamp || 0);
+      if (dataAge < 24 * 60 * 60 * 1000) {
+        console.log('📋 Loaded current video lies from storage:', stored.lies.length);
+        return stored.lies;
+      } else {
+        // Clean up old data
+        await chrome.storage.local.remove([`currentVideoLies_${videoId}`]);
+      }
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('Error loading current video lies:', error);
+    return [];
   }
 }
 
@@ -104,6 +149,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Handle real-time lies updates
     analysisState.currentClaims = message.claims || [];
     
+    // NEW: Store lies persistently for current video
+    if (message.videoId) {
+      currentVideoId = message.videoId;
+      currentVideoLies = message.claims || [];
+      saveCurrentVideoLies(message.videoId, currentVideoLies);
+    }
+    
     if (message.isComplete) {
       analysisState.isRunning = false;
       analysisState.stage = 'complete';
@@ -139,6 +191,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     analysisState.startTime = Date.now();
     analysisState.stage = 'starting';
     
+    // NEW: Set current video context
+    currentVideoId = message.videoId;
+    currentVideoLies = [];
+    
     // Save state persistently
     saveAnalysisState();
     
@@ -147,6 +203,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === 'getAnalysisState') {
     // Popup requesting current analysis state
     sendResponse(analysisState);
+    return true;
+  } else if (message.type === 'getCurrentVideoLies') {
+    // NEW: Popup requesting current video lies
+    const videoId = message.videoId;
+    if (videoId) {
+      loadCurrentVideoLies(videoId).then(lies => {
+        sendResponse({ 
+          success: true, 
+          lies: lies,
+          videoId: videoId 
+        });
+      });
+    } else {
+      sendResponse({ 
+        success: false, 
+        lies: [],
+        error: 'No video ID provided' 
+      });
+    }
     return true;
   } else if (message.type === 'clearAnalysisState') {
     // Clear the stored state
@@ -161,8 +236,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       stage: 'idle'
     };
     
+    // NEW: Clear current video lies
+    currentVideoLies = [];
+    currentVideoId = null;
+    
     // Clear persistent storage
     chrome.storage.local.remove(['backgroundAnalysisState']);
+    
+    // Clear all current video lies data
+    chrome.storage.local.get(null).then(allData => {
+      const keysToRemove = Object.keys(allData).filter(key => key.startsWith('currentVideoLies_'));
+      if (keysToRemove.length > 0) {
+        chrome.storage.local.remove(keysToRemove);
+      }
+    });
     
     sendResponse({ success: true });
     return true;
@@ -172,6 +259,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.runtime.sendMessage(message);
     } catch (error) {
       console.log('Popup closed, cache update stored in background');
+    }
+  } else if (message.type === 'lieSkipped') {
+    // NEW: Handle lie skip tracking for accurate time saved calculation
+    console.log('⏭️ Background: Lie skipped:', message);
+    
+    // Forward to popup for stats update
+    try {
+      chrome.runtime.sendMessage(message);
+    } catch (error) {
+      console.log('Popup closed, lie skip stored in background');
     }
   }
   
@@ -338,12 +435,14 @@ chrome.runtime.onMessage.addListener((message) => {
   }
 });
 
-// Periodic cleanup of old analysis states
+// Periodic cleanup of old analysis states and video lies data
 setInterval(async () => {
   try {
-    const result = await chrome.storage.local.get(['backgroundAnalysisState']);
-    if (result.backgroundAnalysisState) {
-      const stateAge = Date.now() - (result.backgroundAnalysisState.timestamp || 0);
+    const allData = await chrome.storage.local.get(null);
+    
+    // Clean up old analysis states
+    if (allData.backgroundAnalysisState) {
+      const stateAge = Date.now() - (allData.backgroundAnalysisState.timestamp || 0);
       
       // Clean up states older than 2 hours
       if (stateAge > 7200000) {
@@ -351,6 +450,26 @@ setInterval(async () => {
         console.log('🧹 Cleaned up old analysis state');
       }
     }
+    
+    // Clean up old video lies data (older than 24 hours)
+    const videoLiesKeys = Object.keys(allData).filter(key => key.startsWith('currentVideoLies_'));
+    const keysToRemove = [];
+    
+    for (const key of videoLiesKeys) {
+      const data = allData[key];
+      if (data && data.timestamp) {
+        const dataAge = Date.now() - data.timestamp;
+        if (dataAge > 24 * 60 * 60 * 1000) { // 24 hours
+          keysToRemove.push(key);
+        }
+      }
+    }
+    
+    if (keysToRemove.length > 0) {
+      await chrome.storage.local.remove(keysToRemove);
+      console.log('🧹 Cleaned up old video lies data:', keysToRemove.length);
+    }
+    
   } catch (error) {
     console.error('Error during periodic cleanup:', error);
   }

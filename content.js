@@ -270,6 +270,14 @@ async function saveAnalysisToSupabase(videoId, analysisText, lies = [], videoTit
     // Store detected lies for download
     storeDetectedLiesForDownload(lies, videoId);
     
+    // NEW: Send lies update to background for persistence
+    chrome.runtime.sendMessage({
+      type: 'liesUpdate',
+      claims: lies,
+      videoId: videoId,
+      isComplete: true
+    });
+    
     // Notify popup of cache update
     chrome.runtime.sendMessage({
       type: 'cacheUpdated',
@@ -305,6 +313,14 @@ async function saveAnalysisToCache(videoId, analysisText, lies = []) {
     
     // Store detected lies for download
     storeDetectedLiesForDownload(lies, videoId);
+    
+    // NEW: Send lies update to background for persistence
+    chrome.runtime.sendMessage({
+      type: 'liesUpdate',
+      claims: lies,
+      videoId: videoId,
+      isComplete: true
+    });
     
     // Notify popup of cache update
     chrome.runtime.sendMessage({
@@ -787,8 +803,8 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
   }
 }
 
-// Function to update session stats with improved time saved calculation
-async function updateSessionStats(newLies = []) {
+// NEW: Function to update session stats with accurate skip tracking
+async function updateSessionStats(newLies = [], actualSkippedTime = 0) {
   try {
     const stats = await chrome.storage.local.get(['sessionStats']);
     const currentStats = stats.sessionStats || {
@@ -802,12 +818,11 @@ async function updateSessionStats(newLies = []) {
     currentStats.liesDetected += newLies.length;
     currentStats.highSeverity += newLies.filter(c => c.severity === 'high').length;
     
-    // Calculate actual time saved based on lie durations
-    const actualTimeSaved = newLies.reduce((total, lie) => {
-      return total + (lie.duration || 10); // Use actual duration or default to 10 seconds
-    }, 0);
-    
-    currentStats.timeSaved += actualTimeSaved;
+    // NEW: Only add time saved if it was actually skipped
+    if (actualSkippedTime > 0) {
+      currentStats.timeSaved += actualSkippedTime;
+      console.log('📊 Added actual skipped time to stats:', actualSkippedTime, 'seconds');
+    }
     
     await chrome.storage.local.set({ sessionStats: currentStats });
     
@@ -864,6 +879,7 @@ async function processVideo() {
         chrome.runtime.sendMessage({
           type: 'liesUpdate',
           claims: cachedAnalysis.claims,
+          videoId: videoId,
           isComplete: true
         });
         
@@ -937,6 +953,7 @@ async function processVideo() {
     chrome.runtime.sendMessage({
       type: 'liesUpdate',
       claims: allLies,
+      videoId: videoId,
       totalClaims: allLies.length,
       isComplete: true
     });
@@ -968,8 +985,8 @@ async function processVideo() {
     // Save final analysis to Supabase (with fallback to local cache)
     await saveAnalysisToSupabase(videoId, finalAnalysis, allLies, videoTitle, channelName);
     
-    // Update session stats with improved time calculation
-    await updateSessionStats(allLies);
+    // Update session stats with NO automatic time saved (only when actually skipped)
+    await updateSessionStats(allLies, 0);
     
     // Clean old cache entries
     await cleanOldCache();
@@ -1149,6 +1166,14 @@ function checkAndSkipLies() {
         window.history.replaceState({}, '', url.toString());
         
         showSkipNotification(lie, lieDuration);
+        
+        // NEW: Send skip tracking to background for accurate stats
+        chrome.runtime.sendMessage({
+          type: 'lieSkipped',
+          lie: lie,
+          actualSkippedTime: lieDuration,
+          videoId: new URLSearchParams(window.location.href.split('?')[1]).get('v')
+        });
         
         console.log(`✅ Skip mode: Successfully skipped to ${skipToTime}s (after ${lieDuration}s lie)`);
         console.log(`✅ Skip mode: Total lies skipped this session: ${skippedLiesInSession.size}`);

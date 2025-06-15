@@ -807,7 +807,7 @@ function resetAnalysisUI() {
   updateProgressIndicator('idle');
 }
 
-// Immediate check for current video (synchronous where possible)
+// NEW: Enhanced function to check current video and load persistent lies
 async function checkCurrentVideoImmediate() {
   try {
     // Query active tab to get current YouTube video
@@ -817,6 +817,23 @@ async function checkCurrentVideoImmediate() {
       const videoId = extractVideoId(tab.url);
       if (videoId) {
         currentVideoId = videoId;
+        
+        // Load persistent lies from background
+        try {
+          const response = await chrome.runtime.sendMessage({ 
+            type: 'getCurrentVideoLies', 
+            videoId: videoId 
+          });
+          
+          if (response && response.success && response.lies) {
+            currentVideoLies = response.lies;
+            console.log('📋 Loaded persistent lies from background:', currentVideoLies.length);
+            updateLiesIndicator(currentVideoLies);
+          }
+        } catch (error) {
+          console.log('No persistent lies found, checking cache...');
+        }
+        
         await updateVideoStatsImmediate(videoId, tab.title);
         return true;
       }
@@ -895,17 +912,21 @@ async function updateVideoStatsImmediate(videoId, title) {
       
       console.log(`📊 Lies found: ${liesCount}`);
       
-      // Store lies for filtering
-      currentVideoLies = lies;
+      // Store lies for filtering - only update if we don't already have persistent lies
+      if (currentVideoLies.length === 0) {
+        currentVideoLies = lies;
+      }
       
       // Update lies indicator immediately
-      updateLiesIndicator(lies);
+      updateLiesIndicator(currentVideoLies);
       
       updateProgressIndicator('complete', 'Analysis available');
     } else {
       updateProgressIndicator('idle', 'Not analyzed');
-      updateLiesIndicator([]); // Clear lies indicator
-      currentVideoLies = []; // Clear lies
+      // Only clear if we don't have persistent lies
+      if (currentVideoLies.length === 0) {
+        updateLiesIndicator([]); // Clear lies indicator
+      }
     }
     
     // Update download links availability
@@ -913,8 +934,10 @@ async function updateVideoStatsImmediate(videoId, title) {
     
   } catch (error) {
     console.error('Error updating video stats:', error);
-    updateLiesIndicator([]); // Clear lies indicator
-    currentVideoLies = []; // Clear lies
+    // Only clear if we don't have persistent lies
+    if (currentVideoLies.length === 0) {
+      updateLiesIndicator([]); // Clear lies indicator
+    }
   }
 }
 
@@ -1129,10 +1152,13 @@ async function clearCache() {
     // Find all analysis cache keys
     const analysisKeys = Object.keys(allData).filter(key => key.startsWith('analysis_'));
     
+    // NEW: Also find all current video lies keys
+    const videoLiesKeys = Object.keys(allData).filter(key => key.startsWith('currentVideoLies_'));
+    
     // Also clear background analysis state and session statistics
     const backgroundStateKeys = ['backgroundAnalysisState', 'sessionStats', 'totalStats', 'userFeedback'];
     
-    const keysToRemove = [...analysisKeys, ...backgroundStateKeys];
+    const keysToRemove = [...analysisKeys, ...videoLiesKeys, ...backgroundStateKeys];
     
     if (keysToRemove.length > 0) {
       // Remove all cache entries, background state, and statistics
@@ -1380,7 +1406,44 @@ function setupRealTimeUpdates() {
         checkCurrentVideo();
       }
     }
+    
+    // NEW: Handle lie skip tracking for accurate stats
+    if (message.type === 'lieSkipped') {
+      console.log('⏭️ Popup: Lie skipped, updating stats with actual time:', message.actualSkippedTime);
+      
+      // Update session stats with actual skipped time
+      updateSessionStatsWithSkip(message.actualSkippedTime);
+      
+      // Show notification
+      showNotification(`⏭️ Skipped ${message.actualSkippedTime}s lie at ${message.lie.timestamp}`, 'info', 2000);
+    }
   });
+}
+
+// NEW: Function to update session stats when a lie is actually skipped
+async function updateSessionStatsWithSkip(skippedTime) {
+  try {
+    const stats = await chrome.storage.local.get(['sessionStats']);
+    const currentStats = stats.sessionStats || {
+      videosAnalyzed: 0,
+      liesDetected: 0,
+      highSeverity: 0,
+      timeSaved: 0
+    };
+    
+    // Add the actual skipped time
+    currentStats.timeSaved += skippedTime;
+    
+    await chrome.storage.local.set({ sessionStats: currentStats });
+    
+    // Reload stats to update UI
+    await loadStats();
+    
+    console.log('📊 Updated session stats with skipped time:', skippedTime);
+    
+  } catch (error) {
+    console.error('Error updating session stats with skip:', error);
+  }
 }
 
 // Handle real-time progress updates with visual cues
@@ -1501,6 +1564,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'liesUpdate') {
     // Handle real-time lies updates
     handleLiesUpdate(message);
+  }
+  
+  // NEW: Handle lie skip tracking
+  if (message.type === 'lieSkipped') {
+    console.log('⏭️ Popup: Lie skipped, updating stats with actual time:', message.actualSkippedTime);
+    updateSessionStatsWithSkip(message.actualSkippedTime);
+    showNotification(`⏭️ Skipped ${message.actualSkippedTime}s lie at ${message.lie.timestamp}`, 'info', 2000);
   }
 });
 
