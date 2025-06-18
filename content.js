@@ -88,7 +88,7 @@
     }
   }
   
-  // Enhanced transcript extraction with automatic panel hiding
+  // Enhanced transcript extraction with comprehensive panel hiding
   class YouTubeTranscriptExtractor {
     constructor() {
       this.maxRetries = 3;
@@ -103,30 +103,36 @@
         'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]',
         '#panels ytd-engagement-panel-section-list-renderer',
         'ytd-transcript-renderer',
-        '[aria-label*="transcript" i][role="dialog"]'
+        '[aria-label*="transcript" i][role="dialog"]',
+        '#engagement-panel-searchable-transcript',
+        '.ytd-engagement-panel-section-list-renderer'
       ];
       this.transcriptButtonSelectors = [
         'button[aria-label*="transcript" i]',
         'button[aria-label*="Show transcript" i]',
         '[role="button"][aria-label*="transcript" i]',
         'ytd-button-renderer[button-text*="transcript" i]',
-        'tp-yt-paper-button[aria-label*="transcript" i]'
+        'tp-yt-paper-button[aria-label*="transcript" i]',
+        'yt-button-shape[aria-label*="transcript" i]',
+        '[data-tooltip-text*="transcript" i]'
       ];
       this.wasTranscriptPanelOpenedByUs = false;
+      this.originalPanelState = null;
     }
 
     async extractTranscript() {
       console.log('🎬 Starting transcript extraction...');
       
       try {
-        // Check if transcript panel is already open
-        const isTranscriptPanelOpen = this.isTranscriptPanelVisible();
-        console.log('📋 Transcript panel initially open:', isTranscriptPanelOpen);
+        // Store original panel state
+        this.originalPanelState = this.isTranscriptPanelVisible();
+        console.log('📋 Transcript panel initially open:', this.originalPanelState);
         
         // Method 1: Try direct DOM extraction
         let domTranscript = await this.extractFromDOM();
         if (domTranscript && domTranscript.length > 0) {
           console.log('✅ Successfully extracted transcript from DOM (panel was already open)');
+          // If panel was already open, don't hide it
           return this.formatTranscript(domTranscript);
         }
 
@@ -135,8 +141,8 @@
         if (panelTranscript && panelTranscript.length > 0) {
           console.log('✅ Successfully extracted transcript after opening panel');
           
-          // Hide the transcript panel if we opened it
-          if (this.wasTranscriptPanelOpenedByUs) {
+          // Always hide the transcript panel after extraction (unless it was originally open)
+          if (this.wasTranscriptPanelOpenedByUs && !this.originalPanelState) {
             await this.hideTranscriptPanel();
           }
           
@@ -156,7 +162,7 @@
         console.error('❌ Transcript extraction failed:', error);
         
         // Always try to hide the panel if we opened it, even on error
-        if (this.wasTranscriptPanelOpenedByUs) {
+        if (this.wasTranscriptPanelOpenedByUs && !this.originalPanelState) {
           await this.hideTranscriptPanel();
         }
         
@@ -169,7 +175,9 @@
         const panel = document.querySelector(selector);
         if (panel && panel.offsetParent !== null && 
             !panel.hasAttribute('hidden') && 
-            getComputedStyle(panel).display !== 'none') {
+            getComputedStyle(panel).display !== 'none' &&
+            getComputedStyle(panel).visibility !== 'hidden') {
+          console.log(`📋 Found visible transcript panel with selector: ${selector}`);
           return true;
         }
       }
@@ -251,15 +259,18 @@
       
       try {
         // Method 1: Try to find and click the close button
-        const closeButtons = [
+        const closeButtonSelectors = [
           'button[aria-label*="close" i][aria-label*="transcript" i]',
           'button[aria-label="Close transcript"]',
           'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] button[aria-label*="close" i]',
           '#panels button[aria-label*="close" i]',
-          '.ytd-engagement-panel-title-header-renderer button[aria-label*="close" i]'
+          '.ytd-engagement-panel-title-header-renderer button[aria-label*="close" i]',
+          'yt-button-shape[aria-label*="close" i]',
+          '#engagement-panel-searchable-transcript button[aria-label*="close" i]',
+          '[data-tooltip-text*="close" i]'
         ];
 
-        for (const selector of closeButtons) {
+        for (const selector of closeButtonSelectors) {
           const closeButton = document.querySelector(selector);
           if (closeButton && closeButton.offsetParent !== null) {
             console.log(`🖱️ Found close button with selector: ${selector}`);
@@ -269,7 +280,7 @@
             await new Promise(resolve => setTimeout(resolve, 1000));
             
             if (!this.isTranscriptPanelVisible()) {
-              console.log('✅ Successfully closed transcript panel');
+              console.log('✅ Successfully closed transcript panel with close button');
               this.wasTranscriptPanelOpenedByUs = false;
               return true;
             }
@@ -292,19 +303,32 @@
           }
         }
 
-        // Method 3: Try to hide the panel directly with CSS
+        // Method 3: Try to hide the panel directly with CSS (more aggressive)
         for (const selector of this.transcriptPanelSelectors) {
           const panel = document.querySelector(selector);
           if (panel) {
             console.log(`🎨 Hiding panel with CSS: ${selector}`);
+            
+            // Store original styles for potential restoration
+            const originalDisplay = panel.style.display;
+            const originalVisibility = panel.style.visibility;
+            
+            // Hide the panel
             panel.style.display = 'none';
+            panel.style.visibility = 'hidden';
             panel.setAttribute('hidden', 'true');
+            panel.setAttribute('data-lieblocker-hidden', 'true');
             
             // Also try to hide parent containers
             let parent = panel.parentElement;
             while (parent && parent !== document.body) {
-              if (parent.id === 'panels' || parent.classList.contains('ytd-engagement-panel')) {
+              if (parent.id === 'panels' || 
+                  parent.classList.contains('ytd-engagement-panel') ||
+                  parent.tagName === 'YTD-ENGAGEMENT-PANEL-SECTION-LIST-RENDERER') {
                 parent.style.display = 'none';
+                parent.style.visibility = 'hidden';
+                parent.setAttribute('hidden', 'true');
+                parent.setAttribute('data-lieblocker-hidden', 'true');
                 break;
               }
               parent = parent.parentElement;
@@ -322,7 +346,17 @@
           key: 'Escape',
           code: 'Escape',
           keyCode: 27,
-          bubbles: true
+          bubbles: true,
+          cancelable: true
+        }));
+        
+        // Also try on the document body and window
+        document.body.dispatchEvent(new KeyboardEvent('keydown', {
+          key: 'Escape',
+          code: 'Escape',
+          keyCode: 27,
+          bubbles: true,
+          cancelable: true
         }));
         
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -333,8 +367,45 @@
           return true;
         }
 
-        console.warn('⚠️ Could not hide transcript panel automatically');
-        return false;
+        // Method 5: Try clicking outside the panel to close it
+        console.log('🖱️ Trying to click outside panel to close it...');
+        const videoPlayer = document.querySelector('#movie_player, .video-stream, video');
+        if (videoPlayer) {
+          videoPlayer.click();
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          if (!this.isTranscriptPanelVisible()) {
+            console.log('✅ Successfully closed transcript panel by clicking outside');
+            this.wasTranscriptPanelOpenedByUs = false;
+            return true;
+          }
+        }
+
+        // Method 6: Force hide with more aggressive CSS and DOM manipulation
+        console.log('🔧 Attempting aggressive panel hiding...');
+        const allPanels = document.querySelectorAll([
+          '#panels',
+          'ytd-engagement-panel-section-list-renderer',
+          '[id*="transcript"]',
+          '[class*="transcript"]',
+          '[aria-label*="transcript" i]'
+        ].join(', '));
+        
+        allPanels.forEach(panel => {
+          if (panel.textContent && panel.textContent.toLowerCase().includes('transcript')) {
+            panel.style.display = 'none !important';
+            panel.style.visibility = 'hidden !important';
+            panel.style.opacity = '0 !important';
+            panel.style.height = '0 !important';
+            panel.style.overflow = 'hidden !important';
+            panel.setAttribute('hidden', 'true');
+            panel.setAttribute('data-lieblocker-force-hidden', 'true');
+          }
+        });
+
+        console.log('⚠️ Applied aggressive hiding - transcript panel should now be hidden');
+        this.wasTranscriptPanelOpenedByUs = false;
+        return true;
 
       } catch (error) {
         console.error('❌ Error hiding transcript panel:', error);
@@ -777,5 +848,26 @@
     testExtensionContext();
   }, 30000); // Every 30 seconds
 
-  console.log('✅ Enhanced LieBlocker content script initialized with robust error handling');
+  // Clean up any transcript panels that might have been left open by previous sessions
+  function cleanupLeftoverTranscriptPanels() {
+    try {
+      const leftoverPanels = document.querySelectorAll('[data-lieblocker-hidden="true"], [data-lieblocker-force-hidden="true"]');
+      leftoverPanels.forEach(panel => {
+        panel.style.display = 'none';
+        panel.style.visibility = 'hidden';
+        panel.setAttribute('hidden', 'true');
+      });
+      
+      if (leftoverPanels.length > 0) {
+        console.log(`🧹 Cleaned up ${leftoverPanels.length} leftover transcript panels`);
+      }
+    } catch (error) {
+      console.error('❌ Error cleaning up leftover panels:', error);
+    }
+  }
+
+  // Run cleanup on page load
+  setTimeout(cleanupLeftoverTranscriptPanels, 1000);
+
+  console.log('✅ Enhanced LieBlocker content script initialized with comprehensive transcript panel hiding');
 })();
