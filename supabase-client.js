@@ -136,7 +136,19 @@
           throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
         }
         
-        const result = await response.json();
+        // Check if response has content before parsing JSON
+        const responseText = await response.text();
+        let result = [];
+        
+        if (responseText && responseText.trim() !== '') {
+          try {
+            result = JSON.parse(responseText);
+          } catch (parseError) {
+            console.warn('⚠️ Non-JSON response from insert:', responseText);
+            result = [];
+          }
+        }
+        
         console.log('✅ Supabase INSERT success:', result);
         
         return { data: Array.isArray(data) ? result : result[0], error: null };
@@ -148,16 +160,19 @@
     
     async upsert(data, options = {}) {
       try {
-        const url = `${this.client.url}/rest/v1/${this.table}`;
+        let url = `${this.client.url}/rest/v1/${this.table}`;
         const payload = Array.isArray(data) ? data : [data];
         
         const headers = {
           ...this.client.headers
         };
         
-        // Add resolution preference for upserts
+        // For upserts, we need to add the proper parameters and headers
         if (options.onConflict) {
-          headers['Prefer'] += ',resolution=merge-duplicates';
+          // Add the on_conflict parameter to the URL
+          url += `?on_conflict=${options.onConflict}`;
+          // Combine both preferences: return data AND resolve conflicts
+          headers['Prefer'] = 'return=representation,resolution=merge-duplicates';
         }
         
         console.log('🔄 Supabase UPSERT request:', url, payload);
@@ -177,7 +192,19 @@
           throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
         }
         
-        const result = await response.json();
+        // Check if response has content before parsing JSON
+        const responseText = await response.text();
+        let result = [];
+        
+        if (responseText && responseText.trim() !== '') {
+          try {
+            result = JSON.parse(responseText);
+          } catch (parseError) {
+            console.warn('⚠️ Non-JSON response from upsert:', responseText);
+            result = [];
+          }
+        }
+        
         console.log('✅ Supabase UPSERT success:', result);
         
         return { data: Array.isArray(data) ? result : result[0], error: null };
@@ -193,13 +220,15 @@
   
   // Database helper functions
   window.SupabaseDB = {
+    client: supabase, // Reference to the Supabase client
+
     // Test connection
     async testConnection() {
       try {
         console.log('🧪 Testing Supabase connection...');
-        const { data, error } = await supabase
-          .from('videos')
-          .select('count')
+        // Simple test - just select the first few records to test connectivity
+        const videosTable = new SupabaseTable(this.client, 'videos');
+        const { data, error } = await videosTable.select('id')
           .execute();
         
         if (error) {
@@ -218,27 +247,24 @@
     // Videos
     async getVideo(videoId) {
       console.log('🔍 Getting video:', videoId);
-      const { data, error } = await supabase
-        .from('videos')
-        .select('*')
+      const videosTable = new SupabaseTable(this.client, 'videos');
+      const { data, error } = await videosTable.select('*')
         .eq('video_id', videoId)
-        .single()
         .execute();
       
-      if (error && error.message && !error.message.includes('No rows')) {
+      if (error) {
         console.error('❌ Error getting video:', error);
         throw error;
       }
       
       console.log('📹 Video result:', data);
-      return data;
+      return data && data.length > 0 ? data[0] : null;
     },
 
     async createVideo(videoData) {
       console.log('📝 Creating video:', videoData);
-      const { data, error } = await supabase
-        .from('videos')
-        .insert(videoData);
+      const videosTable = new SupabaseTable(this.client, 'videos');
+      const { data, error } = await videosTable.insert(videoData);
       
       if (error) {
         console.error('❌ Error creating video:', error);
@@ -251,9 +277,10 @@
 
     async upsertVideo(videoData) {
       console.log('🔄 Upserting video:', videoData);
-      const { data, error } = await supabase
-        .from('videos')
-        .upsert(videoData, { onConflict: 'video_id' });
+      
+      // Use the custom client with proper upsert handling
+      const videosTable = new SupabaseTable(this.client, 'videos');
+      const { data, error } = await videosTable.upsert(videoData, { onConflict: 'video_id' });
       
       if (error) {
         console.error('❌ Error upserting video:', error);
@@ -275,11 +302,9 @@
         return null;
       }
       
-      const { data, error } = await supabase
-        .from('video_analysis')
-        .select('*')
+      const videoAnalysisTable = new SupabaseTable(this.client, 'video_analysis');
+      const { data, error } = await videoAnalysisTable.select('*')
         .eq('video_id', video.id)
-        .order('created_at', { ascending: false })
         .execute();
       
       if (error) {
@@ -293,9 +318,8 @@
 
     async createVideoAnalysis(analysisData) {
       console.log('📝 Creating video analysis:', analysisData);
-      const { data, error } = await supabase
-        .from('video_analysis')
-        .insert(analysisData);
+      const videoAnalysisTable = new SupabaseTable(this.client, 'video_analysis');
+      const { data, error } = await videoAnalysisTable.insert(analysisData);
       
       if (error) {
         console.error('❌ Error creating video analysis:', error);
@@ -309,11 +333,9 @@
     // Detected Lies
     async getDetectedLies(analysisId) {
       console.log('🔍 Getting detected lies for analysis ID:', analysisId);
-      const { data, error } = await supabase
-        .from('detected_lies')
-        .select('*')
+      const detectedLiesTable = new SupabaseTable(this.client, 'detected_lies');
+      const { data, error } = await detectedLiesTable.select('*')
         .eq('analysis_id', analysisId)
-        .order('timestamp_seconds', { ascending: true })
         .execute();
       
       if (error) {
@@ -327,9 +349,8 @@
 
     async createDetectedLies(liesData) {
       console.log('📝 Creating detected lies:', liesData);
-      const { data, error } = await supabase
-        .from('detected_lies')
-        .insert(liesData);
+      const detectedLiesTable = new SupabaseTable(this.client, 'detected_lies');
+      const { data, error } = await detectedLiesTable.insert(liesData);
       
       if (error) {
         console.error('❌ Error creating detected lies:', error);
@@ -338,6 +359,93 @@
       
       console.log('✅ Detected lies created:', data);
       return data;
+    },
+
+    // High-level storage functions used by content script
+    async storeVideoAnalysis(analysisData) {
+      try {
+        console.log('📝 Storing video analysis:', analysisData);
+        
+        // First, ensure the video record exists
+        const videoData = {
+          video_id: analysisData.video_id,
+          title: analysisData.video_title,
+          channel_name: analysisData.channel_name,
+          // Extract duration from URL if available, otherwise default
+          duration: null
+        };
+        
+        const video = await this.upsertVideo(videoData);
+        
+        // Map the analysis data to match database schema (base columns only - migration pending)
+        const dbAnalysisData = {
+          video_id: video.id, // Use the UUID from videos table
+          analysis_version: '2.1',
+          total_lies_detected: analysisData.total_lies || 0,
+          analysis_duration_minutes: analysisData.analysis_duration_minutes || 20,
+          confidence_threshold: 0.85
+          // TODO: Add these after migration is applied:
+          // average_confidence: analysisData.average_confidence || 0,
+          // severity_low: analysisData.severity_low || 0,
+          // severity_medium: analysisData.severity_medium || 0,
+          // severity_high: analysisData.severity_high || 0,
+          // total_segments_analyzed: analysisData.total_segments_analyzed || 0
+        };
+        
+        const analysisResult = await this.createVideoAnalysis(dbAnalysisData);
+        console.log('✅ Video analysis stored successfully');
+        return analysisResult;
+        
+      } catch (error) {
+        console.error('❌ Error storing video analysis:', error);
+        throw error;
+      }
+    },
+
+    async storeLies(liesData) {
+      try {
+        console.log('📝 Storing lies data:', liesData);
+        
+        if (!liesData || liesData.length === 0) {
+          console.log('📝 No lies to store');
+          return [];
+        }
+        
+        // Get the video and analysis records to get the analysis_id
+        const videoId = liesData[0].video_id;
+        const video = await this.getVideo(videoId);
+        
+        if (!video) {
+          throw new Error('Video not found for storing lies');
+        }
+        
+        const analyses = await this.getVideoAnalysis(videoId);
+        if (!analyses || analyses.length === 0) {
+          throw new Error('No analysis found for storing lies');
+        }
+        
+        const latestAnalysis = analyses[0];
+        
+        // Map lies data to match database schema
+        const dbLiesData = liesData.map(lie => ({
+          analysis_id: latestAnalysis.id,
+          timestamp_seconds: lie.timestamp_seconds,
+          duration_seconds: lie.duration_seconds || 10,
+          claim_text: lie.claim_text,
+          explanation: lie.explanation,
+          confidence: lie.confidence,
+          severity: lie.severity,
+          category: lie.category || 'other'
+        }));
+        
+        const result = await this.createDetectedLies(dbLiesData);
+        console.log('✅ Lies stored successfully');
+        return result;
+        
+      } catch (error) {
+        console.error('❌ Error storing lies:', error);
+        throw error;
+      }
     },
 
     // Analytics
