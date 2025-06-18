@@ -5,11 +5,13 @@ A Chrome extension that automatically detects and skips lies in YouTube videos u
 ## Features
 
 - **Real-time Lie Detection**: Analyzes video transcripts using OpenAI or Google Gemini
+- **DOM-based Transcript Extraction**: Directly extracts transcripts from YouTube's interface
 - **Auto-Skip Mode**: Automatically jumps over detected lies while watching
 - **Visual Warnings**: Shows detected lies with timestamps and explanations
 - **Confidence Scoring**: Only shows lies with 85%+ confidence
-- **Local Caching**: Saves analysis results to avoid re-processing
-- **Customizable Settings**: Configure analysis duration, AI provider, and detection mode
+- **Supabase Integration**: Stores and retrieves analysis results efficiently
+- **Session Statistics**: Tracks videos analyzed, lies detected, and time saved
+- **Sharp Timestamp Matching**: Accurate lie-to-timestamp mapping for precise skipping
 
 ## Installation
 
@@ -23,10 +25,12 @@ A Chrome extension that automatically detects and skips lies in YouTube videos u
 
 1. Click the LieBlocker extension icon
 2. Go to Settings tab
-3. Add your API keys:
-   - **Supadata API Token**: For transcript extraction (get at https://supadata.ai)
+3. Add your AI API key:
    - **AI API Key**: OpenAI or Google Gemini for lie detection
-4. Configure your preferences:
+4. Configure your Supabase connection (optional):
+   - **Supabase URL**: Your Supabase project URL
+   - **Supabase Anon Key**: Your Supabase anonymous key
+5. Configure your preferences:
    - Detection mode (visual warnings or auto-skip)
    - Analysis duration (5-60 minutes)
    - AI provider and model
@@ -41,11 +45,6 @@ A Chrome extension that automatically detects and skips lies in YouTube videos u
 6. If auto-skip is enabled, lies will be automatically skipped during playback
 
 ## API Requirements
-
-### Supadata API
-- Used for extracting YouTube video transcripts
-- Get your token at: https://supadata.ai
-- Supports multiple languages with English preference
 
 ### AI Provider (Choose One)
 
@@ -62,15 +61,17 @@ A Chrome extension that automatically detects and skips lies in YouTube videos u
 - All processing happens locally in your browser
 - API keys are stored locally and never shared
 - No user data is collected or transmitted
-- Analysis results are cached locally for 24 hours
+- Analysis results can be stored in Supabase (optional) or cached locally
+- Supabase integration is optional and user-controlled
 
 ## Technical Details
 
-- **Transcript Extraction**: Uses Supadata API with English language preference
+- **Transcript Extraction**: Direct DOM extraction from YouTube's native transcript interface
 - **AI Analysis**: Configurable confidence threshold (85%+ default)
-- **Timestamp Precision**: Maps lies to exact video timestamps
-- **Skip Logic**: Intelligent skipping with visual notifications
-- **Cache Management**: Automatic cleanup of old analysis data
+- **Timestamp Precision**: Sharp matching system maps lies to exact video timestamps
+- **Skip Logic**: Intelligent skipping with visual notifications and accurate duration tracking
+- **Data Storage**: Supabase integration for persistent storage with local fallback
+- **Session Tracking**: Real-time statistics for videos analyzed, lies detected, and time saved
 
 ## Supported Browsers
 
