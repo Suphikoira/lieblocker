@@ -857,25 +857,6 @@
           </div>
           
           <div class="setting">
-            <label for="transcript-provider">Transcript Provider</label>
-            <select id="transcript-provider">
-              <option value="dom">Fetch DOM (Default)</option>
-              <option value="alternative">Alternative API</option>
-              <option value="supadata">Supadata API</option>
-            </select>
-            <div class="setting-description">
-              Choose how to extract video transcripts. DOM fetching is most reliable but requires transcript panel to be open.
-            </div>
-          </div>
-          
-          <div class="setting">
-            <label for="supadata-token">Supadata API Token</label>
-            <input type="password" id="supadata-token" placeholder="Enter your Supadata API token...">
-            <div id="supadata-token-error" class="error-message" style="display: none;"></div>
-            <div id="supadata-token-success" class="success-message" style="display: none;"></div>
-          </div>
-          
-          <div class="setting">
             <label for="ai-provider">AI Provider</label>
             <select id="ai-provider">
               <option value="openai">OpenAI</option>
@@ -945,10 +926,6 @@
             <div class="stat-item">
               <div class="stat-value" id="lies-detected">0</div>
               <div class="stat-label">Lies Detected</div>
-            </div>
-            <div class="stat-item">
-              <div class="stat-value" id="high-severity">0</div>
-              <div class="stat-label">High Confidence</div>
             </div>
             <div class="stat-item">
               <div class="stat-value" id="time-saved">0s</div>
