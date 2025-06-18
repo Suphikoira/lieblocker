@@ -1,8 +1,92 @@
-// Enhanced content script with improved DOM extraction and transcript panel management
+// Enhanced content script with improved transcript extraction and robust error handling
 (function() {
   'use strict';
   
   console.log('🚀 LieBlocker content script loaded');
+  
+  // Connection state management
+  let connectionState = {
+    isConnected: false,
+    lastError: null,
+    retryCount: 0
+  };
+  
+  // Test extension context and connection
+  function testExtensionContext() {
+    try {
+      // Test if chrome.runtime is available
+      if (!chrome || !chrome.runtime || !chrome.runtime.id) {
+        throw new Error('Extension context invalidated');
+      }
+      
+      // Test if we can access extension APIs
+      chrome.runtime.sendMessage({ type: 'ping' }, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn('⚠️ Extension context may be invalid:', chrome.runtime.lastError.message);
+          connectionState.isConnected = false;
+        } else {
+          connectionState.isConnected = true;
+        }
+      });
+      
+      return true;
+    } catch (error) {
+      console.error('❌ Extension context test failed:', error);
+      connectionState.isConnected = false;
+      connectionState.lastError = error.message;
+      return false;
+    }
+  }
+  
+  // Enhanced message sending with error handling
+  async function sendMessageSafely(message, options = {}) {
+    const { retries = 2, timeout = 10000 } = options;
+    
+    // Test extension context first
+    if (!testExtensionContext()) {
+      throw new Error('Extension context invalidated - please refresh the page');
+    }
+    
+    for (let attempt = 1; attempt <= retries + 1; attempt++) {
+      try {
+        console.log(`📤 Content: Sending message (attempt ${attempt}):`, message);
+        
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Message timeout')), timeout);
+        });
+        
+        const messagePromise = new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage(message, (response) => {
+            if (chrome.runtime.lastError) {
+              reject(new Error(chrome.runtime.lastError.message));
+            } else {
+              resolve(response);
+            }
+          });
+        });
+        
+        const response = await Promise.race([messagePromise, timeoutPromise]);
+        console.log('📥 Content: Message response:', response);
+        return response;
+        
+      } catch (error) {
+        console.error(`❌ Content: Message send failed (attempt ${attempt}):`, error);
+        
+        if (error.message.includes('Extension context invalidated') || 
+            error.message.includes('Could not establish connection')) {
+          // Don't retry on context invalidation
+          throw error;
+        }
+        
+        if (attempt <= retries) {
+          console.log(`🔄 Content: Retrying message in ${attempt * 500}ms...`);
+          await new Promise(resolve => setTimeout(resolve, attempt * 500));
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
   
   // Enhanced transcript extraction with automatic panel hiding
   class YouTubeTranscriptExtractor {
@@ -483,8 +567,14 @@
   const transcriptExtractor = new YouTubeTranscriptExtractor();
   const videoController = new YouTubeVideoController();
 
-  // Message handling
+  // Enhanced message handling with error recovery
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // Test extension context first
+    if (!testExtensionContext()) {
+      sendResponse({ success: false, error: 'Extension context invalidated' });
+      return;
+    }
+    
     if (message.type === 'extractDOMTranscript') {
       transcriptExtractor.extractTranscript()
         .then(transcript => {
@@ -504,12 +594,14 @@
         videoController.showSkipNotification(message.lie);
         
         // Send skip tracking message to background
-        chrome.runtime.sendMessage({
+        sendMessageSafely({
           type: 'lieSkipped',
           videoId: message.videoId,
           timestamp: message.time,
           duration: message.lie.duration_seconds || 10,
           lieId: message.lie.id
+        }).catch(error => {
+          console.error('❌ Error sending skip tracking:', error);
         });
       }
       sendResponse({ success: success });
@@ -519,79 +611,171 @@
       const currentTime = videoController.getCurrentTime();
       sendResponse({ success: true, currentTime: currentTime });
     }
+    
+    if (message.type === 'ping') {
+      sendResponse({ success: true, message: 'pong' });
+    }
   });
 
-  // Auto-skip functionality
+  // Auto-skip functionality with error handling
   let autoSkipEnabled = false;
   let currentVideoLies = [];
   let lastSkipTime = 0;
 
-  // Load auto-skip setting
-  chrome.storage.sync.get(['autoSkipEnabled'], (result) => {
-    autoSkipEnabled = result.autoSkipEnabled || false;
-  });
+  // Load auto-skip setting with error handling
+  try {
+    chrome.storage.sync.get(['autoSkipEnabled'], (result) => {
+      if (chrome.runtime.lastError) {
+        console.warn('⚠️ Could not load auto-skip setting:', chrome.runtime.lastError.message);
+      } else {
+        autoSkipEnabled = result.autoSkipEnabled || false;
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error loading auto-skip setting:', error);
+  }
 
-  // Listen for setting changes
-  chrome.storage.onChanged.addListener((changes, namespace) => {
-    if (namespace === 'sync' && changes.autoSkipEnabled) {
-      autoSkipEnabled = changes.autoSkipEnabled.newValue;
-    }
-  });
+  // Listen for setting changes with error handling
+  try {
+    chrome.storage.onChanged.addListener((changes, namespace) => {
+      if (namespace === 'sync' && changes.autoSkipEnabled) {
+        autoSkipEnabled = changes.autoSkipEnabled.newValue;
+      }
+    });
+  } catch (error) {
+    console.error('❌ Error setting up storage listener:', error);
+  }
 
-  // Auto-skip monitoring
+  // Auto-skip monitoring with error handling
   function checkForAutoSkip() {
     if (!autoSkipEnabled || currentVideoLies.length === 0) return;
 
-    const currentTime = videoController.getCurrentTime();
-    
-    // Find lies that should be skipped at current time
-    const liesToSkip = currentVideoLies.filter(lie => {
-      const lieStart = lie.timestamp_seconds;
-      const lieEnd = lieStart + (lie.duration_seconds || 10);
+    try {
+      const currentTime = videoController.getCurrentTime();
       
-      return currentTime >= lieStart && 
-             currentTime < lieEnd && 
-             currentTime > lastSkipTime + 5; // Prevent rapid skipping
-    });
-
-    if (liesToSkip.length > 0) {
-      const lie = liesToSkip[0];
-      const skipToTime = lie.timestamp_seconds + (lie.duration_seconds || 10);
-      
-      console.log(`⏭️ Auto-skipping lie at ${lie.timestamp_seconds}s`);
-      
-      if (videoController.seekTo(skipToTime)) {
-        videoController.showSkipNotification(lie);
-        lastSkipTime = currentTime;
+      // Find lies that should be skipped at current time
+      const liesToSkip = currentVideoLies.filter(lie => {
+        const lieStart = lie.timestamp_seconds;
+        const lieEnd = lieStart + (lie.duration_seconds || 10);
         
-        // Send skip tracking message
-        chrome.runtime.sendMessage({
-          type: 'lieSkipped',
-          videoId: getCurrentVideoId(),
-          timestamp: lie.timestamp_seconds,
-          duration: lie.duration_seconds || 10,
-          lieId: lie.id
-        });
+        return currentTime >= lieStart && 
+               currentTime < lieEnd && 
+               currentTime > lastSkipTime + 5; // Prevent rapid skipping
+      });
+
+      if (liesToSkip.length > 0) {
+        const lie = liesToSkip[0];
+        const skipToTime = lie.timestamp_seconds + (lie.duration_seconds || 10);
+        
+        console.log(`⏭️ Auto-skipping lie at ${lie.timestamp_seconds}s`);
+        
+        if (videoController.seekTo(skipToTime)) {
+          videoController.showSkipNotification(lie);
+          lastSkipTime = currentTime;
+          
+          // Send skip tracking message
+          sendMessageSafely({
+            type: 'lieSkipped',
+            videoId: getCurrentVideoId(),
+            timestamp: lie.timestamp_seconds,
+            duration: lie.duration_seconds || 10,
+            lieId: lie.id
+          }).catch(error => {
+            console.error('❌ Error sending auto-skip tracking:', error);
+          });
+        }
       }
+    } catch (error) {
+      console.error('❌ Error in auto-skip check:', error);
     }
   }
 
   // Monitor video time for auto-skip
   setInterval(checkForAutoSkip, 1000);
 
-  // Listen for lies updates from background
+  // Listen for lies updates from background with error handling
   chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'liesUpdate' && message.claims) {
-      currentVideoLies = message.claims;
-      console.log(`📋 Updated current video lies: ${currentVideoLies.length} lies`);
+    try {
+      if (message.type === 'liesUpdate' && message.claims) {
+        currentVideoLies = message.claims;
+        console.log(`📋 Updated current video lies: ${currentVideoLies.length} lies`);
+      }
+    } catch (error) {
+      console.error('❌ Error handling lies update:', error);
     }
   });
 
   // Utility function to get current video ID
   function getCurrentVideoId() {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('v');
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      return urlParams.get('v');
+    } catch (error) {
+      console.error('❌ Error getting video ID:', error);
+      return null;
+    }
   }
 
-  console.log('✅ Enhanced LieBlocker content script initialized with transcript panel auto-hide');
+  // Enhanced auto-loading with error recovery
+  async function autoLoadVideoLies() {
+    try {
+      if (!testExtensionContext()) {
+        console.warn('⚠️ Extension context invalid, skipping auto-load');
+        return;
+      }
+      
+      const videoId = getCurrentVideoId();
+      if (!videoId) {
+        console.log('📋 No video ID found, skipping auto-load');
+        return;
+      }
+      
+      console.log('📋 Auto-loading lies for video:', videoId);
+      
+      const response = await sendMessageSafely({
+        type: 'getCurrentVideoLies',
+        videoId: videoId
+      }, { retries: 1, timeout: 5000 });
+      
+      if (response && response.success && response.lies) {
+        currentVideoLies = response.lies;
+        console.log(`✅ Auto-loaded ${response.lies.length} lies for current video`);
+      } else {
+        console.log('📋 No lies found for current video');
+        currentVideoLies = [];
+      }
+      
+    } catch (error) {
+      console.error('❌ Error auto-loading video lies:', error);
+      
+      if (error.message.includes('Extension context invalidated')) {
+        console.warn('⚠️ Extension context invalidated - user should refresh page');
+      }
+    }
+  }
+
+  // Auto-load lies when page loads or URL changes
+  let lastVideoId = getCurrentVideoId();
+  
+  // Initial load
+  setTimeout(autoLoadVideoLies, 2000);
+  
+  // Monitor for URL changes (YouTube SPA navigation)
+  const observer = new MutationObserver(() => {
+    const currentVideoId = getCurrentVideoId();
+    if (currentVideoId && currentVideoId !== lastVideoId) {
+      lastVideoId = currentVideoId;
+      console.log('🔄 Video changed, auto-loading lies...');
+      setTimeout(autoLoadVideoLies, 2000);
+    }
+  });
+  
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  // Test extension context periodically
+  setInterval(() => {
+    testExtensionContext();
+  }, 30000); // Every 30 seconds
+
+  console.log('✅ Enhanced LieBlocker content script initialized with robust error handling');
 })();
