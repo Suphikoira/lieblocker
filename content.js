@@ -1,71 +1,101 @@
-// Function to extract YouTube video transcript via background script
-async function getTranscript() {
-  const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
-  if (!videoId) {
-    return null;
-  }
-
-  try {
-    const currentUrl = window.location.href;
-    
-    // Send request to background script to handle API call
-    const response = await chrome.runtime.sendMessage({
-      type: 'getTranscript',
-      data: { videoId, currentUrl }
-    });
-    
-    if (!response.success) {
-      throw new Error(response.error);
+// Helper function to safely send messages to background script
+async function safelySendMessageToBackground(message) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        if (chrome.runtime.lastError) {
+          // Background script might not be available - log but don't throw
+          console.warn('Failed to send message to background:', chrome.runtime.lastError.message);
+          resolve(null);
+        } else {
+          resolve(response);
+        }
+      });
+    } catch (error) {
+      // Background script might not be available - log but don't throw
+      console.warn('Failed to send message to background:', error.message);
+      resolve(null);
     }
-    
-    // Return the transcript segments directly since they already have timestamps
-    return response.data;
+  });
+}
 
+// Function to extract YouTube video transcript from DOM
+async function getTranscript() {
+  console.log('🔍 Content: Extracting transcript directly from DOM...');
+  
+  try {
+    const transcript = await extractTranscriptFromDOM();
+    if (!transcript || transcript.length === 0) {
+      throw new Error('No transcript found or transcript is empty');
+    }
+    return transcript;
   } catch (error) {
     console.error('❌ Error extracting transcript:', error);
-    try {
-      chrome.runtime.sendMessage({
-        type: 'analysisResult',
-        data: `Error: ${error.message}. Make sure the video has closed captions available.`
-      });
-    } catch (msgError) {
-      console.error('Error sending message:', msgError);
-    }
+    safelySendMessageToBackground({
+      type: 'analysisResult',
+      data: `Error: ${error.message}. Make sure the video has closed captions available and try opening the transcript panel manually.`
+    });
     return null;
   }
 }
 
-// NEW: Enhanced DOM transcript extraction based on your example
-async function extractTranscriptFromDOM() {
-  try {
-    console.log('🔍 Content: Searching for transcript data in DOM...');
+// NEW: Non-blocking AsyncTranscriptExtractor class following SOLID principles
+class AsyncTranscriptExtractor {
+  constructor() {
+    this.maxRetries = 3;
+    this.baseDelay = 1000;
+    this.selectors = [
+      'ytd-transcript-segment-renderer',
+      '#panels ytd-transcript-segment-renderer',
+      'ytd-engagement-panel-section-list-renderer ytd-transcript-segment-renderer',
+      '[target-id*="transcript"] ytd-transcript-segment-renderer'
+    ];
+  }
+
+  // Non-blocking transcript extraction using MutationObserver
+  async extractTranscript() {
+    console.log('🔍 Starting non-blocking transcript extraction...');
     
-    // Method 1: Try to get transcript from the transcript panel if it's open
-    const transcriptSegments = document.querySelectorAll('ytd-transcript-segment-renderer');
-    
-    if (transcriptSegments.length > 0) {
-      console.log('✅ Content: Found transcript segments in DOM');
-      const transcript = Array.from(transcriptSegments).map(segment => {
-        // Try multiple selectors for timestamp and text
-        const timeElement = segment.querySelector('.segment-timestamp, [class*="timestamp"]');
-        const textElement = segment.querySelector('.segment-text, [class*="segment-text"]');
-        
-        const timestamp = timeElement ? timeElement.textContent.trim() : '';
-        const text = textElement ? textElement.textContent.trim() : '';
-        
-        return {
-          timestamp: timestamp,
-          text: text,
-          start: parseTimestampToSeconds(timestamp)
-        };
-      }).filter(item => item.text); // Remove empty entries
+    try {
+      // First try to find existing transcript segments
+      let segments = this.findExistingSegments();
+      if (segments.length > 0) {
+        console.log(`✅ Found ${segments.length} existing transcript segments`);
+        return this.parseSegments(segments);
+      }
+
+      // If no existing segments, try to open transcript panel
+      const transcriptOpened = await this.openTranscriptPanel();
+      if (!transcriptOpened) {
+        throw new Error('Could not open transcript panel');
+      }
+
+      // Wait for transcript segments to load using MutationObserver
+      segments = await this.waitForTranscriptSegments();
       
-      console.log('✅ Content: Successfully extracted transcript from DOM segments');
-      console.log(`📋 Content: ${transcript.length} segments found`);
-      return transcript;
+      if (segments.length === 0) {
+        throw new Error('No transcript segments found after loading');
+      }
+
+      console.log(`✅ Successfully extracted ${segments.length} transcript segments`);
+      return this.parseSegments(segments);
+
+    } catch (error) {
+      console.error('❌ DOM transcript extraction failed:', error);
+      
+      // Fallback: Try to extract from ytInitialPlayerResponse caption URLs
+      try {
+        console.log('🔄 Attempting fallback to caption URL extraction...');
+        return await this.extractFromCaptionUrl();
+      } catch (fallbackError) {
+        console.error('❌ Caption URL fallback also failed:', fallbackError);
+        throw new Error(`All transcript extraction methods failed. Original error: ${error.message}`);
+      }
     }
-    
-    // Method 2: Try to extract from ytInitialPlayerResponse or other YouTube data objects
+  }
+
+  // Fallback method: Extract from caption URL
+  async extractFromCaptionUrl() {
     let transcriptData = null;
     
     // Check for ytInitialPlayerResponse
@@ -82,11 +112,9 @@ async function extractTranscriptFromDOM() {
       for (let script of scripts) {
         const content = script.textContent;
         if (content.includes('captionTracks') || content.includes('playerCaptionsTracklistRenderer')) {
-          // Try to find caption tracks in various formats
           const patterns = [
             /"captionTracks":\s*(\[.*?\])/,
-            /"playerCaptionsTracklistRenderer":\s*\{[^}]*"captionTracks":\s*(\[.*?\])/,
-            /captionTracks['"]\s*:\s*(\[.*?\])/
+            /"playerCaptionsTracklistRenderer":\s*\{[^}]*"captionTracks":\s*(\[.*?\])/
           ];
           
           for (let pattern of patterns) {
@@ -108,158 +136,167 @@ async function extractTranscriptFromDOM() {
       }
     }
     
-    if (transcriptData && transcriptData.baseUrl) {
-      console.log('✅ Content: Found caption track URL');
-      console.log('🔗 Content: Caption URL:', transcriptData.baseUrl);
-      
-      // Try to fetch transcript from caption URL
-      try {
-        const transcript = await fetchTranscriptFromCaptionUrl(transcriptData.baseUrl);
-        if (transcript && transcript.length > 0) {
-          console.log('✅ Content: Successfully fetched transcript from caption URL');
-          return transcript;
-        }
-      } catch (error) {
-        console.warn('⚠️ Content: Failed to fetch from caption URL:', error);
-      }
+    if (!transcriptData || !transcriptData.baseUrl) {
+      throw new Error('No caption URL found in YouTube data');
     }
     
-    // Method 3: Try to find and click transcript button
-    const transcriptButtons = [
+    console.log('✅ Found caption track URL, fetching transcript...');
+    return await fetchTranscriptFromCaptionUrl(transcriptData.baseUrl);
+  }
+
+  // Find existing transcript segments without opening panel
+  findExistingSegments() {
+    for (const selector of this.selectors) {
+      const segments = document.querySelectorAll(selector);
+      if (segments.length > 0) {
+        console.log(`📍 Found segments with selector: ${selector}`);
+        return Array.from(segments);
+      }
+    }
+    return [];
+  }
+
+  // Non-blocking transcript panel opening
+  async openTranscriptPanel() {
+    const transcriptButton = this.findTranscriptButton();
+    if (!transcriptButton) {
+      console.warn('⚠️ Transcript button not found');
+      return false;
+    }
+
+    console.log('🔘 Attempting to open transcript panel...');
+    
+    // Click without blocking UI
+    transcriptButton.click();
+    
+    // Brief non-blocking wait for panel animation
+    await this.nonBlockingDelay(500);
+    
+    return true;
+  }
+
+  // Find transcript button with multiple selectors
+  findTranscriptButton() {
+    const selectors = [
       'button[aria-label*="transcript" i]',
       'button[aria-label*="Show transcript" i]',
-      'ytd-button-renderer[button-text*="transcript" i]',
+      'yt-button-shape[aria-label*="transcript" i]',
       '[role="button"][aria-label*="transcript" i]',
-      'tp-yt-paper-button[aria-label*="transcript" i]',
-      // More specific selectors for YouTube's structure
-      'ytd-menu-renderer button[aria-label*="transcript" i]',
-      'ytd-watch-flexy button[aria-label*="transcript" i]',
-      // Additional selectors for different YouTube layouts
-      'ytd-video-description-transcript-section-renderer button',
-      'ytd-structured-description-content-renderer button[aria-label*="transcript" i]'
+      'ytd-button-renderer[aria-label*="transcript" i]',
+      'tp-yt-paper-button[aria-label*="transcript" i]'
     ];
-    
-    let transcriptButton = null;
-    for (let selector of transcriptButtons) {
-      transcriptButton = document.querySelector(selector);
-      if (transcriptButton) {
-        console.log(`📝 Content: Found transcript button with selector: ${selector}`);
-        break;
+
+    for (const selector of selectors) {
+      const button = document.querySelector(selector);
+      if (button) {
+        console.log(`🎯 Found transcript button: ${selector}`);
+        return button;
       }
     }
     
-    // Also try to find by text content
-    if (!transcriptButton) {
-      const allButtons = document.querySelectorAll('button, [role="button"]');
-      for (let button of allButtons) {
-        const text = button.textContent.toLowerCase();
-        if (text.includes('transcript') || text.includes('show transcript')) {
-          transcriptButton = button;
-          console.log('📝 Content: Found transcript button by text content');
-          break;
+    // Fallback: search by text content
+    const allButtons = document.querySelectorAll('button, [role="button"]');
+    for (const button of allButtons) {
+      const text = button.textContent.toLowerCase();
+      if (text.includes('transcript') || text.includes('show transcript')) {
+        console.log('🎯 Found transcript button by text content');
+        return button;
+      }
+    }
+    
+    return null;
+  }
+
+  // Non-blocking wait using MutationObserver
+  async waitForTranscriptSegments(timeout = 10000) {
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now();
+      
+      // Check immediately first
+      const existingSegments = this.findExistingSegments();
+      if (existingSegments.length > 0) {
+        resolve(existingSegments);
+        return;
+      }
+
+      // Set up MutationObserver for dynamic loading
+      const observer = new MutationObserver(() => {
+        const segments = this.findExistingSegments();
+        if (segments.length > 0) {
+          console.log(`🔄 MutationObserver found ${segments.length} segments`);
+          observer.disconnect();
+          resolve(segments);
+        } else if (Date.now() - startTime > timeout) {
+          observer.disconnect();
+          reject(new Error(`Timeout waiting for transcript segments (${timeout}ms)`));
         }
-      }
-    }
+      });
+
+      // Observe DOM changes
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: false,
+        characterData: false
+      });
+
+      // Timeout fallback
+      setTimeout(() => {
+        observer.disconnect();
+        const finalSegments = this.findExistingSegments();
+        if (finalSegments.length > 0) {
+          console.log(`⏰ Timeout fallback found ${finalSegments.length} segments`);
+          resolve(finalSegments);
+        } else {
+          reject(new Error(`No transcript segments found within ${timeout}ms`));
+        }
+      }, timeout);
+    });
+  }
+
+  // Parse transcript segments into our format
+  parseSegments(segments) {
+    const transcriptSegments = [];
     
-    if (transcriptButton) {
-      console.log('🖱️ Content: Clicking transcript button...');
-      transcriptButton.click();
-      
-      // Wait for transcript panel to load
-      console.log('⏳ Content: Waiting for transcript panel to load...');
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // Try again to get transcript segments
-      const newTranscriptSegments = document.querySelectorAll('ytd-transcript-segment-renderer');
-      if (newTranscriptSegments.length > 0) {
-        console.log('✅ Content: Found transcript segments after clicking button');
-        const transcript = Array.from(newTranscriptSegments).map(segment => {
-          const timeElement = segment.querySelector('.segment-timestamp, [class*="timestamp"]');
-          const textElement = segment.querySelector('.segment-text, [class*="segment-text"]');
-          
-          const timestamp = timeElement ? timeElement.textContent.trim() : '';
-          const text = textElement ? textElement.textContent.trim() : '';
-          
-          return {
+    segments.forEach((segment, index) => {
+      try {
+        const timeElement = segment.querySelector('.segment-timestamp, [class*="timestamp"]');
+        const textElement = segment.querySelector('.segment-text, [class*="segment-text"]');
+        
+        const timestamp = timeElement ? timeElement.textContent.trim() : '';
+        const text = textElement ? textElement.textContent.trim() : '';
+        
+        if (text && text.length > 0) {
+          transcriptSegments.push({
             timestamp: timestamp,
             text: text,
-            start: parseTimestampToSeconds(timestamp)
-          };
-        }).filter(item => item.text);
-        
-        if (transcript.length > 0) {
-          console.log('✅ Content: Successfully extracted transcript after button click');
-          return transcript;
+            start: parseTimestampToSeconds(timestamp) || (index * 2)
+          });
         }
+      } catch (error) {
+        console.warn(`⚠️ Error parsing segment ${index}:`, error);
       }
-      
-      throw new Error('Transcript button clicked but no transcript segments found. Please wait a moment and try again.');
-    }
-    
-    // Method 4: Look for any existing transcript-related elements in the DOM
-    const possibleTranscriptSelectors = [
-      'ytd-transcript-body-renderer',
-      '[data-transcript]',
-      '.transcript-text',
-      '.caption-line',
-      // YouTube-specific selectors
-      'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] ytd-transcript-segment-renderer',
-      '#panels ytd-transcript-segment-renderer'
-    ];
-    
-    for (let selector of possibleTranscriptSelectors) {
-      const elements = document.querySelectorAll(selector);
-      if (elements.length > 0) {
-        console.log(`✅ Content: Found transcript elements with selector: ${selector}`);
-        
-        // For transcript body renderer, look for segments inside
-        if (selector.includes('body-renderer') || selector.includes('engagement-panel')) {
-          const segments = document.querySelectorAll('ytd-transcript-segment-renderer');
-          if (segments.length > 0) {
-            const transcript = Array.from(segments).map(segment => {
-              const timeElement = segment.querySelector('[class*="timestamp"], .segment-timestamp');
-              const textElement = segment.querySelector('[class*="text"], .segment-text');
-              
-              const timestamp = timeElement ? timeElement.textContent.trim() : '';
-              const text = textElement ? textElement.textContent.trim() : '';
-              
-              return {
-                timestamp: timestamp,
-                text: text,
-                start: parseTimestampToSeconds(timestamp)
-              };
-            }).filter(item => item.text && item.text.length > 0);
-            
-            if (transcript.length > 0) {
-              console.log('✅ Content: Successfully extracted transcript from DOM elements');
-              return transcript;
-            }
-          }
-        }
-      }
-    }
-    
-    // Method 5: Check for closed captions in video player
-    const player = document.querySelector('#movie_player, .video-stream, video');
-    if (player && player.getSubtitlesUserSettings) {
-      try {
-        console.log('🎬 Content: Found video player, checking for subtitle settings...');
-        const subtitleSettings = player.getSubtitlesUserSettings();
-        if (subtitleSettings) {
-          console.log('✅ Content: Found subtitle settings in video player');
-          // This method doesn't provide actual transcript text, just settings
-        }
-      } catch (e) {
-        console.log('⚠️ Content: Unable to access video player subtitle settings');
-      }
-    }
-    
-    throw new Error('No transcript found. The video may not have captions available, or the transcript panel needs to be opened manually. Please try: 1) Make sure the video has CC available, 2) Manually click "Show transcript" button, 3) Refresh the page and try again.');
-    
-  } catch (error) {
-    console.error('❌ Content: Error in DOM transcript extraction:', error);
-    throw error;
+    });
+
+    return transcriptSegments;
   }
+
+  // Non-blocking delay using requestAnimationFrame
+  async nonBlockingDelay(ms) {
+    return new Promise(resolve => {
+      if (ms <= 16) {
+        requestAnimationFrame(resolve);
+      } else {
+        setTimeout(resolve, ms);
+      }
+    });
+  }
+}
+
+// Enhanced DOM transcript extraction with non-blocking approach
+async function extractTranscriptFromDOM() {
+  const extractor = new AsyncTranscriptExtractor();
+  return await extractor.extractTranscript();
 }
 
 // NEW: Helper function to fetch transcript from caption URL
@@ -558,104 +595,234 @@ async function cleanOldCache() {
   }
 }
 
-// Simplified system prompt function with improved lie detection criteria and configurable duration
+// Enhanced system prompt function with improved lie detection criteria and strict JSON formatting
 function buildSystemPrompt(analysisDuration) {
-  return `You are a fact-checking expert. Analyze this ${analysisDuration}-minute YouTube transcript and identify false or misleading claims.
+  return `You are an expert fact-checker. Identify false, misleading, or unsupported claims in video content. Evaluate all topics equally based on factual accuracy.
 
-DETECTION CRITERIA:
-- Only flag factual claims, not opinions or predictions
-- Require very high confidence (90%+) before flagging
-- Focus on clear, verifiable false claims with strong evidence
-- Be specific about what makes each claim problematic
-- Consider context and intent
-- Err on the side of caution to avoid false positives
+DETECTION CRITERIA (85%+ confidence required):
+- Factually incorrect statements (not opinions or predictions)
+- Claims contradicted by credible evidence or expert consensus  
+- Misleading information that could harm or deceive
+- Statistical misrepresentations or false cause-and-effect claims
+- EXCLUDE accurate, true, or uncertain statements
 
-PRIORITY AREAS:
-- Health & Medical misinformation
-- Science & Technology false claims
-- Financial scams or misleading advice
-- Political misinformation
-- Conspiracy theories without evidence
-- Safety-related false information
-
-TIMESTAMP INSTRUCTIONS:
-- The transcript contains segments with precise timestamps
-- When you identify a false claim, find the EXACT text in the transcript
-- Use the timestamp where that specific false statement begins
-- Be precise - match the exact wording from the transcript
-- Timestamps should be in MM:SS format (e.g., "2:34")
-
-DURATION ESTIMATION:
-- Estimate how long each lie takes to be fully stated based on the claim's complexity
-- Consider the actual length and complexity of the false statement
-- Simple false statements: 5-10 seconds
-- Complex lies with elaboration: 10-20 seconds
-- Extended false narratives: 15-30 seconds
-- Maximum duration: 30 seconds
-- Base your estimate on the actual content and speaking pace
-
-RESPONSE FORMAT:
-Respond with a JSON object containing an array of claims. Each claim should have:
-- "timestamp": The exact timestamp from the transcript (e.g., "2:34")
-- "timeInSeconds": Timestamp converted to seconds (e.g., 154)
-- "duration": Estimated duration of the lie in seconds (5-30, based on actual complexity)
-- "claim": The specific false or misleading statement (exact quote from transcript)
-- "explanation": Why this claim is problematic (1-2 sentences)
-- "confidence": Your confidence level (0.0-1.0)
-- "severity": "low", "medium", or "high"
-
-Example response:
+CRITICAL: Return ONLY valid JSON in this EXACT format:
 {
   "claims": [
     {
-      "timestamp": "1:23",
-      "timeInSeconds": 83,
-      "duration": 12,
-      "claim": "Vaccines contain microchips",
-      "explanation": "This is a debunked conspiracy theory with no scientific evidence.",
+      "claim": "Exact false statement as spoken",
+      "explanation": "Why it's false with evidence", 
       "confidence": 0.95,
       "severity": "high"
     }
   ]
 }
 
-IMPORTANT: Only return the JSON object. Do not include any other text.`;
+- NO markdown formatting (no code blocks)
+- NO additional text before or after JSON
+- NO explanatory comments
+- Return {"claims": []} if no lies found
+- Ensure all JSON is properly formatted with correct quotes and commas
+
+Analyze the following transcript: `;
 }
 
 // NEW: Enhanced function to find precise timestamp and duration using n-gram fallback
 function findClaimStartAndEnd(claimText, transcriptData) {
-  // Clean and normalize the claim text for better matching
-  const normalizedClaim = claimText.toLowerCase()
-    .replace(/[^\w\s]/g, ' ')
-    .replace(/\s+/g, ' ')
+  console.log(`🔍 Searching for claim: "${claimText}"`);
+  
+  // Clean the claim text but preserve more structure than before
+  const cleanedClaim = claimText
+    .toLowerCase()
+    .replace(/[""'']/g, '"') // Normalize quotes
+    .replace(/[…]/g, '...') // Normalize ellipsis
+    .replace(/\s+/g, ' ') // Normalize whitespace
     .trim();
   
-  const fullText = transcriptData.text.toLowerCase();
+  const fullTranscriptText = transcriptData.text.toLowerCase();
+  console.log(`📜 Full transcript length: ${fullTranscriptText.length} characters`);
   
-  // PRIORITY 1: Try exact phrase match in full text
-  const exactMatchIndex = fullText.indexOf(normalizedClaim);
+  // PRIORITY 1: Try to find the exact claim text in transcript
+  let exactMatchIndex = fullTranscriptText.indexOf(cleanedClaim);
+  
   if (exactMatchIndex !== -1) {
-    const matchEndIndex = exactMatchIndex + normalizedClaim.length;
+    console.log(`✅ Found exact match at character position ${exactMatchIndex}`);
+    return calculateDurationFromMatch(exactMatchIndex, cleanedClaim, transcriptData);
+  }
+  
+  // PRIORITY 2: Try with punctuation removed from both
+  const noPunctClaim = cleanedClaim.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const noPunctTranscript = fullTranscriptText.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ');
+  
+  exactMatchIndex = noPunctTranscript.indexOf(noPunctClaim);
+  
+  if (exactMatchIndex !== -1) {
+    console.log(`✅ Found punctuation-normalized match at character position ${exactMatchIndex}`);
+    return calculateDurationFromMatch(exactMatchIndex, noPunctClaim, transcriptData, true);
+  }
+  
+  // PRIORITY 3: Try finding the longest common substring (for partial matches)
+  const bestMatch = findLongestCommonSubstring(cleanedClaim, fullTranscriptText, transcriptData);
+  
+  if (bestMatch) {
+    console.log(`✅ Found best substring match at position ${bestMatch.index} with ${bestMatch.matchLength} chars`);
+    return bestMatch.result;
+  }
+  
+  // PRIORITY 4: Word-by-word matching fallback
+  return findBestWordMatch(cleanedClaim, transcriptData);
+}
+
+// Helper function to calculate duration from a text match
+function calculateDurationFromMatch(matchIndex, matchText, transcriptData, isPunctuationNormalized = false) {
+  const matchEndIndex = matchIndex + matchText.length;
+  
+  // Use character-to-segment mapping to find start and end segments
+  const charToSegmentMap = isPunctuationNormalized ? 
+    createPunctuationNormalizedCharMap(transcriptData) : 
+    transcriptData.charToSegmentIndexMap;
+  
+  const startSegmentIndex = charToSegmentMap.get(matchIndex) || 
+                           findNearestSegmentIndex(matchIndex, charToSegmentMap);
+  const endSegmentIndex = charToSegmentMap.get(Math.min(matchEndIndex - 1, transcriptData.text.length - 1)) || 
+                         findNearestSegmentIndex(matchEndIndex - 1, charToSegmentMap);
+  
+  if (startSegmentIndex !== undefined && endSegmentIndex !== undefined) {
+    const startSegment = transcriptData.segmentTimestamps[startSegmentIndex];
+    const endSegment = transcriptData.segmentTimestamps[endSegmentIndex];
     
-    // Use character-to-segment mapping to find start and end segments
-    const startSegmentIndex = transcriptData.charToSegmentIndexMap.get(exactMatchIndex);
-    const endSegmentIndex = transcriptData.charToSegmentIndexMap.get(Math.min(matchEndIndex - 1, fullText.length - 1));
-    
-    if (startSegmentIndex !== undefined && endSegmentIndex !== undefined) {
-      const startSegment = transcriptData.segmentTimestamps[startSegmentIndex];
-      const endSegment = transcriptData.segmentTimestamps[endSegmentIndex];
-      
+    if (startSegment && endSegment) {
       const startInSeconds = startSegment.timestamp;
       const endInSeconds = endSegment.timestamp + (endSegment.duration || 5);
-      const duration = Math.max(5, Math.min(endInSeconds - startInSeconds, 30));
+      const exactDuration = endInSeconds - startInSeconds;
+      
+      // Ensure minimum duration of 3 seconds for skip functionality
+      const finalDuration = Math.max(3, exactDuration);
+      
+      console.log(`📏 Exact duration calculated: ${finalDuration}s (segments ${startSegmentIndex} to ${endSegmentIndex})`);
+      console.log(`📏 Time range: ${startInSeconds}s to ${endInSeconds}s`);
       
       return {
         startInSeconds: Math.round(startInSeconds),
         endInSeconds: Math.round(endInSeconds),
-        duration: Math.round(duration)
+        duration: Math.round(finalDuration)
       };
     }
   }
+  
+  console.warn(`⚠️ Could not map character positions to segments`);
+  return null;
+}
+
+// Helper function to find longest common substring
+function findLongestCommonSubstring(claim, transcript, transcriptData) {
+  const claimWords = claim.split(/\s+/);
+  let bestMatch = null;
+  let bestScore = 0;
+  
+  // Try progressively smaller portions of the claim
+  for (let length = claimWords.length; length >= 3; length--) {
+    for (let start = 0; start <= claimWords.length - length; start++) {
+      const substring = claimWords.slice(start, start + length).join(' ');
+      const matchIndex = transcript.indexOf(substring);
+      
+      if (matchIndex !== -1) {
+        const score = substring.length; // Score by character length
+        
+        if (score > bestScore) {
+          bestScore = score;
+          bestMatch = {
+            index: matchIndex,
+            matchLength: substring.length,
+            result: calculateDurationFromMatch(matchIndex, substring, transcriptData)
+          };
+        }
+      }
+    }
+  }
+  
+  return bestMatch;
+}
+
+// Helper function for word-by-word matching
+function findBestWordMatch(claim, transcriptData) {
+  const claimWords = claim.split(/\s+/).filter(word => word.length > 2);
+  
+  if (claimWords.length === 0) {
+    console.warn(`⚠️ No valid words found in claim`);
+    return getFallbackDuration(transcriptData);
+  }
+  
+  // Find the best matching segment for the first significant word
+  const firstWord = claimWords[0];
+  const fullText = transcriptData.text.toLowerCase();
+  const firstWordIndex = fullText.indexOf(firstWord);
+  
+  if (firstWordIndex !== -1) {
+    console.log(`✅ Found first word "${firstWord}" at position ${firstWordIndex}`);
+    
+    // Estimate duration based on number of words (assume ~3 words per second)
+    const estimatedDuration = Math.max(3, Math.min(claimWords.length / 3, 15));
+    
+    const result = calculateDurationFromMatch(firstWordIndex, firstWord, transcriptData);
+    if (result) {
+      // Override duration with word-based estimate
+      result.duration = Math.round(estimatedDuration);
+      result.endInSeconds = result.startInSeconds + result.duration;
+      console.log(`📏 Word-based duration estimate: ${result.duration}s`);
+      return result;
+    }
+  }
+  
+  console.warn(`⚠️ Could not find any words from claim in transcript`);
+  return getFallbackDuration(transcriptData);
+}
+
+// Helper function to create punctuation-normalized character map
+function createPunctuationNormalizedCharMap(transcriptData) {
+  const map = new Map();
+  let charPos = 0;
+  
+  for (let i = 0; i < transcriptData.segmentTimestamps.length; i++) {
+    const segment = transcriptData.segmentTimestamps[i];
+    const normalizedText = segment.text.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    
+    for (let j = 0; j < normalizedText.length; j++) {
+      map.set(charPos + j, i);
+    }
+    
+    charPos += normalizedText.length + 1; // +1 for space between segments
+  }
+  
+  return map;
+}
+
+// Helper function to find nearest segment index
+function findNearestSegmentIndex(charIndex, charToSegmentMap) {
+  // Try nearby positions
+  for (let offset = 0; offset <= 10; offset++) {
+    const index1 = charToSegmentMap.get(charIndex + offset);
+    const index2 = charToSegmentMap.get(charIndex - offset);
+    
+    if (index1 !== undefined) return index1;
+    if (index2 !== undefined) return index2;
+  }
+  
+  return 0; // Fallback to first segment
+}
+
+// Helper function for final fallback
+function getFallbackDuration(transcriptData) {
+  const firstSeg = transcriptData.segmentTimestamps[0];
+  const fallbackDur = firstSeg ? firstSeg.duration : 5;
+  
+  console.log(`📏 Using fallback duration: ${fallbackDur}s (first segment)`);
+  
+  return {
+    startInSeconds: Math.round(transcriptData.startTime),
+    endInSeconds: Math.round(transcriptData.startTime + fallbackDur),
+    duration: Math.round(fallbackDur)
+  };
   
   // PRIORITY 2: N-gram fallback with 3-word combinations
   const claimWords = normalizedClaim.split(/\s+/).filter(word => word.length > 2);
@@ -727,22 +894,49 @@ function findClaimStartAndEnd(claimText, transcriptData) {
   
   if (bestMatch && bestScore > 10) {
     const startInSeconds = bestMatch.timestamp;
-    const estimatedDuration = Math.max(8, Math.min(claimText.length / 10, 25)); // Estimate based on text length
-    const endInSeconds = startInSeconds + estimatedDuration;
+    
+    // Find the segment index for this best match
+    const segmentIndex = transcriptData.segmentTimestamps.findIndex(seg => seg.timestamp === bestMatch.timestamp);
+    
+    if (segmentIndex !== -1) {
+      // Calculate exact duration by finding all segments that contain the claim text
+      const claimWords = normalizedClaim.split(/\s+/);
+      let endSegmentIndex = segmentIndex;
+      
+      // Look ahead to find where the claim likely ends based on word count
+      const wordsPerSegment = 3; // Average words per segment estimate
+      const estimatedSegmentsNeeded = Math.max(1, Math.ceil(claimWords.length / wordsPerSegment));
+      endSegmentIndex = Math.min(segmentIndex + estimatedSegmentsNeeded - 1, transcriptData.segmentTimestamps.length - 1);
+      
+      const endSegment = transcriptData.segmentTimestamps[endSegmentIndex];
+      const exactEndTime = endSegment.timestamp + endSegment.duration;
+      const exactDuration = exactEndTime - startInSeconds;
+      
+      // Ensure minimum duration of 3 seconds
+      const finalDuration = Math.max(3, exactDuration);
+      
+      console.log(`📏 N-gram exact duration calculated: ${finalDuration}s (segments ${segmentIndex} to ${endSegmentIndex})`);
+      
+      return {
+        startInSeconds: Math.round(startInSeconds),
+        endInSeconds: Math.round(startInSeconds + finalDuration),
+        duration: Math.round(finalDuration)
+      };
+    }
+    
+    // Fallback if segment index not found - use single segment duration
+    const segmentDuration = bestMatch.duration || 5;
+    console.log(`📏 Single segment duration used: ${segmentDuration}s`);
     
     return {
       startInSeconds: Math.round(startInSeconds),
-      endInSeconds: Math.round(endInSeconds),
-      duration: Math.round(estimatedDuration)
+      endInSeconds: Math.round(startInSeconds + segmentDuration),
+      duration: Math.round(segmentDuration)
     };
   }
   
-  // Final fallback: use transcript start with default duration
-  return {
-    startInSeconds: Math.round(transcriptData.startTime),
-    endInSeconds: Math.round(transcriptData.startTime + 12),
-    duration: 12
-  };
+  // Use the centralized fallback function
+  return getFallbackDuration(transcriptData);
 }
 
 // Function to analyze lies in full transcript with simplified processing and configurable duration
@@ -796,7 +990,7 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'ai_request',
-      message: `Analyzing ${transcriptData.totalSegments} segments for lies...`
+      message: `Analyzing first ${transcriptData.analysisDuration} minutes of content...`
     });
 
     let response;
@@ -861,77 +1055,233 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
       content = data.candidates[0].content.parts[0].text;
     }
     
-    // Enhanced JSON parsing with better error handling
+    // Enhanced JSON parsing with multiple strategies and better error handling
     try {
-      // Clean the content to ensure valid JSON
-      let cleanContent = content.trim();
+      console.log('🔍 Raw AI response received:', content.substring(0, 500) + (content.length > 500 ? '...' : ''));
       
-      // Remove any markdown code blocks
-      cleanContent = cleanContent.replace(/```json\s*/g, '').replace(/```\s*/g, '');
-      
-      // Fix common JSON issues
-      cleanContent = cleanContent.replace(/\\"/g, '"'); // Fix escaped quotes
-      cleanContent = cleanContent.replace(/"\s*:\s*"/g, '": "'); // Fix spacing around colons
-      
-      // Try to extract JSON from the response
-      const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsedResult = JSON.parse(jsonMatch[0]);
+      // Strategy 1: Try direct JSON parsing (if response is pure JSON)
+      let parsedResult;
+      try {
+        parsedResult = JSON.parse(content.trim());
+        console.log('✅ Direct JSON parsing successful');
+      } catch (directParseError) {
+        console.log('❌ Direct JSON parsing failed, trying extraction methods...');
         
-        // Enhanced post-processing for accurate timestamps and durations
-        if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
-          parsedResult.claims = parsedResult.claims.map((claim, index) => {
-            // Use the new findClaimStartAndEnd function for precise timestamp and duration
-            const { startInSeconds, endInSeconds, duration } = findClaimStartAndEnd(claim.claim, transcriptData);
-            
-            // Apply 2-second offset to start slightly before the lie
-            const TIMESTAMP_OFFSET_SECONDS = 2;
-            const finalTimeInSeconds = Math.max(transcriptData.startTime, startInSeconds - TIMESTAMP_OFFSET_SECONDS);
-            const finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
-            
-            // Ensure timestamp is within bounds
-            const boundedTimeInSeconds = Math.max(transcriptData.startTime, Math.min(finalTimeInSeconds, transcriptData.endTime));
-            const boundedTimestamp = formatSecondsToTimestamp(boundedTimeInSeconds);
-            
-            // Ensure minimum confidence of 85%
-            const adjustedConfidence = Math.max(0.85, claim.confidence || 0.85);
-            
-            return {
-              ...claim,
-              timestamp: boundedTimestamp,
-              timeInSeconds: boundedTimeInSeconds,
-              duration: duration,
-              confidence: adjustedConfidence,
-              severity: claim.severity || 'medium'
-            };
-          });
-          
-          // Filter out lies with confidence below 85%
-          const highConfidenceLies = parsedResult.claims.filter(claim => claim.confidence >= 0.85);
-          
-          parsedResult.claims = highConfidenceLies;
-          
-          // Sort by timestamp for logical order
-          parsedResult.claims.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
+        // Strategy 2: Clean and extract JSON from mixed content
+        let cleanContent = content.trim();
+        
+        // Remove markdown code blocks and formatting
+        cleanContent = cleanContent.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
+        cleanContent = cleanContent.replace(/^json\s*/gi, ''); // Remove leading "json" text
+        
+        // Fix common JSON formatting issues
+        cleanContent = cleanContent.replace(/\\"/g, '"'); // Fix escaped quotes
+        cleanContent = cleanContent.replace(/"\s*:\s*"/g, '": "'); // Fix spacing around colons
+        cleanContent = cleanContent.replace(/,\s*}/g, '}'); // Remove trailing commas
+        cleanContent = cleanContent.replace(/,\s*]/g, ']'); // Remove trailing commas in arrays
+        
+        // Strategy 3: Multiple JSON extraction patterns
+        const jsonPatterns = [
+          /\{[\s\S]*?\}/g, // Basic JSON object
+          /\{[\s\S]*?"claims"\s*:\s*\[[\s\S]*?\][\s\S]*?\}/g, // JSON with claims array
+          /\{[\s\S]*?\}(?=\s*$)/g, // JSON object at end of string
+          /(?<=^|\n)\s*\{[\s\S]*?\}\s*(?=\n|$)/g // JSON object on its own line
+        ];
+        
+        let jsonMatch = null;
+        for (const pattern of jsonPatterns) {
+          const matches = cleanContent.match(pattern);
+          if (matches && matches.length > 0) {
+            // Try parsing each match to find valid JSON
+            for (const match of matches) {
+              try {
+                const testParse = JSON.parse(match);
+                if (testParse && (testParse.claims || testParse.analysis || testParse.results)) {
+                  jsonMatch = match;
+                  console.log(`✅ JSON extracted using pattern: ${pattern.source}`);
+                  break;
+                }
+              } catch (testError) {
+                continue;
+              }
+            }
+            if (jsonMatch) break;
+          }
         }
         
-        return parsedResult;
-      } else {
-        console.warn('No JSON found in AI response');
-        return { claims: [], rawContent: content };
+        if (jsonMatch) {
+          try {
+            parsedResult = JSON.parse(jsonMatch);
+            console.log('✅ JSON extraction and parsing successful');
+          } catch (extractedParseError) {
+            console.error('❌ Failed to parse extracted JSON:', extractedParseError);
+            throw new Error(`JSON extraction succeeded but parsing failed: ${extractedParseError.message}`);
+          }
+        } else {
+          // Strategy 4: Look for key-value patterns and construct JSON
+          console.log('⚠️ No JSON patterns found, attempting fallback parsing...');
+          
+          // Try to find claims in a structured text format
+          const claimsMatch = content.match(/(?:claims?|lies?|false.*?statements?)[\s\S]*?(?:\[[\s\S]*?\]|\{[\s\S]*?\})/gi);
+          if (claimsMatch) {
+            console.log('🔍 Found potential claims structure, attempting to parse...');
+            
+            // Create a minimal valid structure
+            parsedResult = {
+              claims: [],
+              analysis: "AI response could not be parsed as JSON, but potential issues were detected",
+              confidence: 0.6
+            };
+          } else {
+            throw new Error('No JSON or structured content found in AI response');
+          }
+        }
       }
+      
+      // Validate the parsed result structure
+      if (!parsedResult || typeof parsedResult !== 'object') {
+        throw new Error('Parsed result is not a valid object');
+      }
+      
+      // Ensure claims array exists (accept alternative field names)
+      if (!parsedResult.claims) {
+        if (parsedResult.lies) {
+          parsedResult.claims = parsedResult.lies;
+          console.log('📝 Mapped "lies" field to "claims"');
+        } else if (parsedResult.results) {
+          parsedResult.claims = parsedResult.results;
+          console.log('📝 Mapped "results" field to "claims"');
+        } else if (parsedResult.issues) {
+          parsedResult.claims = parsedResult.issues;
+          console.log('📝 Mapped "issues" field to "claims"');
+        } else {
+          parsedResult.claims = [];
+          console.log('⚠️ No claims array found, created empty array');
+        }
+      }
+      
+      // Enhanced post-processing for accurate timestamps and durations
+      if (parsedResult.claims && Array.isArray(parsedResult.claims)) {
+        console.log(`🔍 Processing ${parsedResult.claims.length} claims from AI response`);
+        
+        parsedResult.claims = parsedResult.claims.map((claim, index) => {
+          // Handle different claim formats
+          const claimText = claim.claim || claim.text || claim.statement || claim.lie || '';
+          const explanation = claim.explanation || claim.reason || claim.details || '';
+          const confidence = claim.confidence || claim.score || 0.85;
+          
+          console.log(`📝 Claim ${index + 1}: "${claimText}"`);
+          console.log(`💬 Explanation: "${explanation}"`);
+          console.log(`🎯 Confidence: ${confidence}`);
+          
+          // Use the new findClaimStartAndEnd function for precise timestamp and duration
+          const { startInSeconds, endInSeconds, duration } = findClaimStartAndEnd(claimText, transcriptData);
+          
+          // Use exact timestamp (no offset applied for accurate timing)
+          const finalTimeInSeconds = Math.max(transcriptData.startTime, startInSeconds);
+          const finalTimestamp = formatSecondsToTimestamp(finalTimeInSeconds);
+          
+          // Ensure timestamp is within bounds
+          const boundedTimeInSeconds = Math.max(transcriptData.startTime, Math.min(finalTimeInSeconds, transcriptData.endTime));
+          const boundedTimestamp = formatSecondsToTimestamp(boundedTimeInSeconds);
+          
+          // Ensure minimum confidence of 85%
+          const adjustedConfidence = Math.max(0.85, confidence || 0.85);
+          
+          return {
+            claim: claimText,
+            explanation: explanation,
+            confidence: adjustedConfidence,
+            severity: claim.severity || 'medium',
+            timestamp: boundedTimestamp,
+            timeInSeconds: boundedTimeInSeconds,
+            duration: duration
+          };
+        });
+        
+        // Filter out claims with empty text
+        parsedResult.claims = parsedResult.claims.filter(claim => claim.claim && claim.claim.trim().length > 0);
+        
+        // Filter out lies with confidence below 85%
+        let highConfidenceLies = parsedResult.claims.filter(claim => claim.confidence >= 0.85);
+        console.log(`✅ ${highConfidenceLies.length} claims passed confidence threshold (85%+)`);
+        
+        // NEW: Filter out claims that AI explicitly identifies as accurate
+        const beforeAccuracyFilter = highConfidenceLies.length;
+        highConfidenceLies = highConfidenceLies.filter(claim => {
+          const explanation = (claim.explanation || '').toLowerCase();
+          const isAccurate = explanation.includes('accurate') ||
+                            explanation.includes('correct') ||
+                            explanation.includes('not false') ||
+                            explanation.includes('not misleading') ||
+                            explanation.includes('this claim is true') ||
+                            explanation.includes('this statement is accurate') ||
+                            explanation.includes('factually correct');
+          
+          if (isAccurate) {
+            console.log(`🚫 Filtering out accurate claim: "${claim.claim}"`);
+            console.log(`📝 Explanation: "${claim.explanation}"`);
+            return false; // Exclude accurate claims
+          }
+          return true; // Keep potentially false claims
+        });
+        
+        const afterAccuracyFilter = highConfidenceLies.length;
+        if (beforeAccuracyFilter > afterAccuracyFilter) {
+          console.log(`🚫 Filtered out ${beforeAccuracyFilter - afterAccuracyFilter} accurate claims`);
+        }
+        
+        parsedResult.claims = highConfidenceLies;
+        console.log(`🎯 Final result: ${parsedResult.claims.length} lies to report`);
+        
+        // Sort by timestamp for logical order
+        parsedResult.claims.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
+      }
+      
+      return parsedResult;
+      
     } catch (parseError) {
-      console.error('JSON parsing error:', parseError);
-      console.log('Raw AI response:', content);
-      return { claims: [], rawContent: content, parseError: parseError.message };
+      console.error('❌ All JSON parsing strategies failed:', parseError);
+      console.log('🔍 Full AI response for debugging:');
+      console.log('Content length:', content.length);
+      console.log('Content preview:', content.substring(0, 1000));
+      console.log('Content type:', typeof content);
+      
+      // Return a fallback result instead of failing completely
+      return { 
+        claims: [], 
+        rawContent: content, 
+        parseError: parseError.message,
+        analysis: "AI response could not be parsed. Please check the console for debugging information."
+      };
     }
     
   } catch (error) {
-    console.error('Error analyzing lies:', error);
+    console.error('❌ Error analyzing lies:', error);
+    
+    // Provide specific error messages based on error type
+    let userMessage = 'Error analyzing lies: ';
+    
+    if (error.message.includes('API key')) {
+      userMessage += 'Please check your AI API key in the extension settings.';
+    } else if (error.message.includes('fetch')) {
+      userMessage += 'Network connection failed. Please check your internet connection and try again.';
+    } else if (error.message.includes('HTTP error! status: 401')) {
+      userMessage += 'API authentication failed. Please verify your API key is correct.';
+    } else if (error.message.includes('HTTP error! status: 429')) {
+      userMessage += 'API rate limit exceeded. Please wait a moment and try again.';
+    } else if (error.message.includes('HTTP error! status: 500')) {
+      userMessage += 'AI service temporarily unavailable. Please try again in a few minutes.';
+    } else if (error.message.includes('JSON')) {
+      userMessage += 'AI response format error. The analysis may still work, please check the results.';
+    } else {
+      userMessage += error.message;
+    }
+    
     try {
       chrome.runtime.sendMessage({
         type: 'analysisResult',
-        data: `Error analyzing lies: ${error.message}`
+        data: userMessage
       });
     } catch (msgError) {
       console.error('Error sending message:', msgError);
@@ -940,130 +1290,32 @@ Analyze this transcript and identify any false or misleading claims. Use the exa
   }
 }
 
-// Function to update session stats with improved time saved calculation
-async function updateSessionStats(newLies = []) {
+// NEW: Helper function to fetch video metadata (title, channel, etc.)
+async function fetchVideoMetadata(videoId) {
   try {
-    const stats = await chrome.storage.local.get(['sessionStats']);
-    const currentStats = stats.sessionStats || {
-      videosAnalyzed: 0,
-      liesDetected: 0,
-      highSeverity: 0,
-      timeSaved: 0
-    };
-    
-    currentStats.videosAnalyzed += 1;
-    currentStats.liesDetected += newLies.length;
-    currentStats.highSeverity += newLies.filter(c => c.severity === 'high').length;
-    
-    // Calculate actual time saved based on lie durations
-    const actualTimeSaved = newLies.reduce((total, lie) => {
-      return total + (lie.duration || 10); // Use actual duration or default to 10 seconds
-    }, 0);
-    
-    currentStats.timeSaved += actualTimeSaved;
-    
-    await chrome.storage.local.set({ sessionStats: currentStats });
-    
-    // Notify popup of stats update
-    chrome.runtime.sendMessage({ type: 'STATS_UPDATE' });
-    
-  } catch (error) {
-    console.error('Error updating session stats:', error);
-  }
-}
-
-// NEW: Auto-load lies when navigating to YouTube videos
-async function autoLoadVideoLies() {
-  try {
-    const videoId = new URLSearchParams(window.location.href.split('?')[1]).get('v');
-    if (!videoId) {
-      console.log('🎬 Content: No video ID found in URL');
-      return;
-    }
-
-    console.log('🎬 Content: Auto-loading lies for video:', videoId);
-
-    // Check local cache first
-    const cachedAnalysis = await getCachedAnalysis(videoId);
-    if (cachedAnalysis && cachedAnalysis.claims && cachedAnalysis.claims.length > 0) {
-      console.log('📋 Content: Found cached lies, loading immediately');
-      
-      // Store lies for download
-      storeDetectedLiesForDownload(cachedAnalysis.claims, videoId);
-      
-      // Send lies update to popup
-      chrome.runtime.sendMessage({
-        type: 'liesUpdate',
-        claims: cachedAnalysis.claims,
-        videoId: videoId,
-        isComplete: true
-      });
-      
-      // Start skip mode if enabled
-      const settings = await chrome.storage.sync.get(['detectionMode']);
-      if (settings.detectionMode === 'skip') {
-        currentVideoLies = cachedAnalysis.claims;
-        startSkipModeMonitoring();
+    const response = await fetch(`https://www.googleapis.com/youtube/v3/videos?id=${videoId}&key=${YOUTUBE_API_KEY}&part=snippet`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
       }
-      
-      console.log('✅ Content: Auto-loaded lies from cache');
-      return;
+    });
+    
+    const data = await response.json();
+    if (data.items && data.items.length > 0) {
+      const videoInfo = data.items[0].snippet;
+      return {
+        title: videoInfo.title,
+        channelId: videoInfo.channelId,
+        channelName: videoInfo.channelTitle,
+        description: videoInfo.description,
+        publishedAt: videoInfo.publishedAt
+      };
     }
-
-    // Check Supabase database if available
-    if (window.SupabaseDB) {
-      try {
-        console.log('🔍 Content: Checking Supabase for video analysis...');
-        const videoStats = await window.SupabaseDB.getVideoStats(videoId);
-        
-        if (videoStats && videoStats.lies && videoStats.lies.length > 0) {
-          console.log('📊 Content: Found lies in Supabase database');
-          
-          // Transform Supabase lies to our format
-          const transformedLies = videoStats.lies.map(lie => ({
-            timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
-            timeInSeconds: lie.timestamp_seconds,
-            duration: lie.duration_seconds || 10,
-            claim: lie.claim_text,
-            explanation: lie.explanation,
-            confidence: lie.confidence,
-            severity: lie.severity,
-            category: lie.category || 'other'
-          }));
-          
-          // Store in local cache for faster future access
-          await saveAnalysisToCache(videoId, 'Analysis loaded from database', transformedLies);
-          
-          // Store lies for download
-          storeDetectedLiesForDownload(transformedLies, videoId);
-          
-          // Send lies update to popup
-          chrome.runtime.sendMessage({
-            type: 'liesUpdate',
-            claims: transformedLies,
-            videoId: videoId,
-            isComplete: true
-          });
-          
-          // Start skip mode if enabled
-          const settings = await chrome.storage.sync.get(['detectionMode']);
-          if (settings.detectionMode === 'skip') {
-            currentVideoLies = transformedLies;
-            startSkipModeMonitoring();
-          }
-          
-          console.log('✅ Content: Auto-loaded lies from Supabase database');
-          return;
-        }
-      } catch (dbError) {
-        console.warn('⚠️ Content: Error checking Supabase database:', dbError);
-      }
-    }
-
-    console.log('📭 Content: No existing lies found for this video');
-
+    
+    return null;
   } catch (error) {
-    console.error('❌ Content: Error in auto-load lies:', error);
+    console.error('Error fetching video metadata:', error);
+    return null;
   }
 }
 
@@ -1088,13 +1340,14 @@ async function processVideo() {
       videoId: videoId
     });
 
-    // Check for cached analysis first
+    // First check for existing analysis (cache + Supabase)
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
-      stage: 'cache_check',
-      message: 'Checking for cached analysis...'
+      stage: 'existing_check',
+      message: 'Checking for existing analysis data...'
     });
 
+    // Check local cache first
     const cachedAnalysis = await getCachedAnalysis(videoId);
     if (cachedAnalysis) {
       chrome.runtime.sendMessage({
@@ -1105,6 +1358,9 @@ async function processVideo() {
       
       // Send cached lies for real-time display
       if (cachedAnalysis.claims && cachedAnalysis.claims.length > 0) {
+        // Always store lies for potential skip mode use
+        currentVideoLies = cachedAnalysis.claims;
+        
         chrome.runtime.sendMessage({
           type: 'liesUpdate',
           claims: cachedAnalysis.claims,
@@ -1112,10 +1368,12 @@ async function processVideo() {
           isComplete: true
         });
         
+        // Update session stats for cached results
+        await updateSessionStats(cachedAnalysis.claims, videoId);
+        
         // Start skip mode monitoring if skip mode is enabled
         const settings = await chrome.storage.sync.get(['detectionMode']);
         if (settings.detectionMode === 'skip') {
-          currentVideoLies = cachedAnalysis.claims;
           startSkipModeMonitoring();
         }
       }
@@ -1128,13 +1386,92 @@ async function processVideo() {
       return;
     }
 
+    // Check Supabase database if available
+    if (window.SupabaseDB) {
+      try {
+        chrome.runtime.sendMessage({
+          type: 'analysisProgress',
+          stage: 'database_check',
+          message: 'Checking database for existing analysis...'
+        });
+        
+        console.log('🔍 Content: Checking Supabase for video analysis...');
+        const videoStats = await window.SupabaseDB.getVideoStats(videoId);
+        
+        if (videoStats && videoStats.lies && videoStats.lies.length > 0) {
+          console.log('📊 Content: Found lies in Supabase database');
+          
+          chrome.runtime.sendMessage({
+            type: 'analysisProgress',
+            stage: 'database_found',
+            message: 'Loading analysis from database...'
+          });
+          
+          // Transform Supabase lies to our format
+          const transformedLies = videoStats.lies.map(lie => ({
+            timestamp: formatSecondsToTimestamp(lie.timestamp_seconds),
+            timeInSeconds: lie.timestamp_seconds,
+            duration: lie.duration_seconds || 10,
+            claim: lie.claim_text,
+            explanation: lie.explanation,
+            confidence: lie.confidence,
+            severity: lie.severity,
+            category: lie.category || 'other'
+          }));
+          
+          // Create analysis text
+          const analysisText = `📊 Analysis loaded from database\n\nFound ${transformedLies.length} lies previously detected in this video.\nAverage confidence: ${Math.round(transformedLies.reduce((sum, lie) => sum + lie.confidence, 0) / transformedLies.length * 100)}%`;
+          
+          // Store in local cache for faster future access
+          await saveAnalysisToCache(videoId, analysisText, transformedLies);
+          
+          // Store lies for download
+          storeDetectedLiesForDownload(transformedLies, videoId);
+          
+          // Always store lies for potential skip mode use
+          currentVideoLies = transformedLies;
+          
+          // Send lies update to popup
+          chrome.runtime.sendMessage({
+            type: 'liesUpdate',
+            claims: transformedLies,
+            videoId: videoId,
+            isComplete: true
+          });
+          
+          // Update session stats for database results
+          await updateSessionStats(transformedLies, videoId);
+          
+          // Send final analysis message
+          chrome.runtime.sendMessage({
+            type: 'analysisResult',
+            data: analysisText
+          });
+          
+          // Start skip mode if enabled
+          const settings = await chrome.storage.sync.get(['detectionMode']);
+          if (settings.detectionMode === 'skip') {
+            startSkipModeMonitoring();
+          }
+          
+          console.log('✅ Content: Loaded analysis from Supabase database');
+          return;
+        }
+      } catch (dbError) {
+        console.warn('⚠️ Content: Error checking Supabase database:', dbError);
+      }
+    }
+
+    // No existing analysis found - proceed with new analysis
+    console.log('📭 Content: No existing analysis found, starting new analysis...');
+
     // No cache found, proceed with fresh analysis
     chrome.runtime.sendMessage({
       type: 'analysisProgress',
       stage: 'transcript_extraction',
       message: 'Extracting video transcript...'
     });
-
+    
     const transcript = await getTranscript();
     if (!transcript) {
       chrome.runtime.sendMessage({
@@ -1190,7 +1527,7 @@ async function processVideo() {
     // Prepare final analysis with enhanced reporting
     let finalAnalysis;
     if (allLies.length === 0) {
-      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with precision timestamp mapping.\nNo lies detected in this video.\n\nThis content appears to be factually accurate based on our strict detection criteria.`;
+      finalAnalysis = `✅ Lie detection complete!\n\nAnalyzed first ${transcriptData.analysisDuration} minutes of video content with precision timestamp mapping.\nNo lies detected in this video.\n\nThis content appears to be factually accurate based on our strict detection criteria.`;
     } else {
       // Sort lies by timestamp for final display
       allLies.sort((a, b) => a.timeInSeconds - b.timeInSeconds);
@@ -1208,14 +1545,25 @@ async function processVideo() {
       const avgConfidence = Math.round(allLies.reduce((sum, c) => sum + c.confidence, 0) / allLies.length * 100);
       const highSeverity = allLies.filter(c => c.severity === 'high').length;
       
-      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed ${transcriptData.analysisDuration} minutes of content (${transcriptData.totalSegments} segments) with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\nHigh severity: ${highSeverity}\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
+      finalAnalysis = `🚨 LIES DETECTED! 🚨\n\nAnalyzed first ${transcriptData.analysisDuration} minutes of video content with enhanced precision.\nFound ${allLies.length} lies with ${avgConfidence}% average confidence.\n\n⚠️ WARNING: This content contains false information that could be harmful if believed.\n\n${liesText}`;
     }
 
     // Save final analysis to cache
     await saveAnalysisToCache(videoId, finalAnalysis, allLies);
     
+    // Store analysis to Supabase database if available
+    if (window.SupabaseDB && allLies.length > 0) {
+      try {
+        console.log('💾 Content: Storing analysis results to Supabase...');
+        await storeAnalysisToDatabase(videoId, allLies, transcriptData);
+        console.log('✅ Content: Successfully stored lies to database');
+      } catch (dbError) {
+        console.warn('⚠️ Content: Failed to store lies to database:', dbError);
+      }
+    }
+    
     // Update session stats with improved time calculation
-    await updateSessionStats(allLies);
+    await updateSessionStats(allLies, videoId);
     
     // Clean old cache entries
     await cleanOldCache();
@@ -1225,10 +1573,14 @@ async function processVideo() {
       data: finalAnalysis
     });
 
+    // Always store lies for potential skip mode use
+    if (allLies.length > 0) {
+      currentVideoLies = allLies;
+    }
+
     // Start skip mode monitoring if skip mode is enabled and lies were found
     const detectionSettings = await chrome.storage.sync.get(['detectionMode']);
     if (detectionSettings.detectionMode === 'skip' && allLies.length > 0) {
-      currentVideoLies = allLies;
       startSkipModeMonitoring();
     }
 
@@ -1359,7 +1711,14 @@ function checkAndSkipLies() {
     
     for (const lie of currentVideoLies) {
       const lieStart = lie.timeInSeconds;
-      const lieDuration = lie.duration || 10;
+      const lieDuration = lie.duration; // Use exact duration from transcript analysis
+      
+      // Ensure we have a valid duration (should always have one now)
+      if (!lieDuration || lieDuration <= 0) {
+        console.warn(`⚠️ Skip mode: Lie at ${lie.timestamp} has invalid duration (${lieDuration}), skipping`);
+        continue;
+      }
+      
       const lieEnd = lieStart + lieDuration;
       const lieId = createLieId(lie);
       
@@ -1405,6 +1764,7 @@ function checkAndSkipLies() {
         });
         
         console.log(`✅ Skip mode: Successfully skipped to ${skipToTime}s (after ${lieDuration}s lie)`);
+        console.log(`⏱️ Skip mode: Time saved this skip: ${lieDuration}s`);
         console.log(`✅ Skip mode: Total lies skipped this session: ${skippedLiesInSession.size}`);
         
         break;
@@ -1494,40 +1854,119 @@ function updateDetectionMode(mode) {
   console.log('🔧 Detection mode updated to:', mode);
   
   if (mode === 'skip') {
+    // If we already have lies loaded, start monitoring immediately
     if (currentVideoLies && currentVideoLies.length > 0) {
       startSkipModeMonitoring();
+    } else {
+      // No lies loaded yet - try to auto-load them
+      console.log('🔧 Skip mode enabled but no lies loaded - attempting to auto-load...');
+      autoLoadVideoLies().then(() => {
+        // After auto-loading, check if we now have lies to monitor
+        if (currentVideoLies && currentVideoLies.length > 0) {
+          console.log('🔧 Auto-loaded lies for skip mode:', currentVideoLies.length);
+          startSkipModeMonitoring();
+        } else {
+          console.log('🔧 No lies found to monitor in skip mode');
+        }
+      }).catch(error => {
+        console.warn('🔧 Could not auto-load lies for skip mode:', error);
+      });
     }
   } else {
     stopSkipModeMonitoring();
   }
 }
 
+// Function to automatically load cached lies for the current video
+async function autoLoadVideoLies() {
+  try {
+    const videoId = getCurrentVideoId();
+    if (!videoId) {
+      console.log('No video ID found for auto-loading lies');
+      return;
+    }
+
+    console.log('🔄 Auto-loading cached lies for video:', videoId);
+    
+    // Check for cached analysis
+    const cacheKey = `analysis_${videoId}`;
+    const cached = await chrome.storage.local.get([cacheKey]);
+    
+    if (cached[cacheKey] && cached[cacheKey].claims) {
+      const lies = cached[cacheKey].claims;
+      console.log(`✅ Found ${lies.length} cached lies for auto-loading`);
+      
+      // Set the lies globally
+      currentVideoLies = lies;
+      window.LieBlockerDetectedLies = lies;
+      
+      // Send to background for UI updates
+      safelySendMessageToBackground({
+        type: 'analysisResult',
+        data: {
+          lies: lies,
+          videoId: videoId,
+          cached: true
+        }
+      });
+      
+      return lies;
+    } else {
+      console.log('No cached lies found for auto-loading');
+      return [];
+    }
+  } catch (error) {
+    console.error('Error auto-loading video lies:', error);
+    return [];
+  }
+}
+
+// Function to get current video ID from URL
+function getCurrentVideoId() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get('v');
+}
+
 // Listen for messages from popup and background script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'startAnalysis') {
-    processVideo();
-    sendResponse({ success: true });
-  } else if (message.type === 'getCurrentTimestamp') {
-    const timestamp = getCurrentVideoTimestamp();
-    sendResponse({ timestamp: timestamp });
-  } else if (message.type === 'jumpToTimestamp') {
-    const success = jumpToVideoTimestamp(message.timestamp);
-    sendResponse({ success: success });
-  } else if (message.type === 'updateDetectionMode') {
-    updateDetectionMode(message.mode);
-    sendResponse({ success: true });
-  } else if (message.type === 'extractDOMTranscript') {
-    // NEW: Handle DOM transcript extraction request from background script
-    extractTranscriptFromDOM()
-      .then(transcript => {
-        sendResponse({ success: true, data: transcript });
-      })
-      .catch(error => {
-        sendResponse({ success: false, error: error.message });
+  try {
+    if (message.type === 'startAnalysis') {
+      // Handle async processVideo properly
+      processVideo().then(() => {
+        try {
+          sendResponse({ success: true });
+        } catch (error) {
+          console.error('Error sending startAnalysis response:', error);
+        }
+      }).catch(error => {
+        console.error('Error in processVideo:', error);
+        try {
+          sendResponse({ success: false, error: error.message });
+        } catch (sendError) {
+          console.error('Error sending error response:', sendError);
+        }
       });
-    return true; // Keep message channel open for async response
+      return true; // Keep message channel open for async response
+    } else if (message.type === 'getCurrentTimestamp') {
+      const timestamp = getCurrentVideoTimestamp();
+      sendResponse({ timestamp: timestamp });
+    } else if (message.type === 'jumpToTimestamp') {
+      const success = jumpToVideoTimestamp(message.timestamp);
+      sendResponse({ success: success });
+    } else if (message.type === 'updateDetectionMode') {
+      updateDetectionMode(message.mode);
+      sendResponse({ success: true });
+    } else {
+      sendResponse({ success: true });
+    }
+  } catch (error) {
+    console.error('Error in content script message handler:', error);
+    try {
+      sendResponse({ success: false, error: error.message });
+    } catch (sendError) {
+      console.error('Error sending error response:', sendError);
+    }
   }
-  return true;
 });
 
 // Check if we're on a YouTube video page
@@ -1537,13 +1976,23 @@ function isYouTubeVideoPage() {
 
 // Send page status to popup when it opens
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'checkPageStatus') {
-    sendResponse({ 
-      isVideoPage: isYouTubeVideoPage(),
-      videoTitle: document.querySelector('h1.ytd-video-primary-info-renderer')?.textContent?.trim() || 'Unknown Video'
-    });
+  try {
+    if (message.type === 'checkPageStatus') {
+      sendResponse({ 
+        isVideoPage: isYouTubeVideoPage(),
+        videoTitle: document.querySelector('h1.ytd-video-primary-info-renderer')?.textContent?.trim() || 'Unknown Video'
+      });
+    } else {
+      sendResponse({ success: true });
+    }
+  } catch (error) {
+    console.error('Error in checkPageStatus handler:', error);
+    try {
+      sendResponse({ success: false, error: error.message });
+    } catch (sendError) {
+      console.error('Error sending error response:', sendError);
+    }
   }
-  return true;
 });
 
 // Handle page navigation and cleanup
@@ -1589,4 +2038,135 @@ if (isYouTubeVideoPage()) {
   setTimeout(() => {
     autoLoadVideoLies();
   }, 2000); // Wait 2 seconds for page to fully load
+}
+
+// Function to update session stats with unique counting per video
+async function updateSessionStats(newLies = [], videoId) {
+  try {
+    const stats = await chrome.storage.local.get(['sessionStats', 'analyzedVideos', 'videoLiesCounts']);
+    const currentStats = stats.sessionStats || {
+      videosAnalyzed: 0,
+      liesDetected: 0,
+      timeSaved: 0
+    };
+    
+    // Track analyzed videos to prevent duplicate counting
+    const analyzedVideos = new Set(stats.analyzedVideos || []);
+    
+    // Track lies detected per video to prevent duplicate counting
+    const videoLiesCounts = stats.videoLiesCounts || {};
+    
+    // Only increment video count if this video hasn't been analyzed before
+    if (videoId && !analyzedVideos.has(videoId)) {
+      currentStats.videosAnalyzed += 1;
+      analyzedVideos.add(videoId);
+      
+      // Store the updated list of analyzed videos
+      await chrome.storage.local.set({ analyzedVideos: Array.from(analyzedVideos) });
+      console.log(`📊 New video analyzed: ${videoId} (total: ${currentStats.videosAnalyzed})`);
+    } else if (videoId && analyzedVideos.has(videoId)) {
+      console.log(`📊 Video already analyzed: ${videoId} (not incrementing count)`);
+    }
+    
+    // Only update lies count if this video's lies haven't been counted before
+    if (videoId && !videoLiesCounts[videoId]) {
+      currentStats.liesDetected += newLies.length;
+      videoLiesCounts[videoId] = newLies.length;
+      
+      // Store the updated lies counts
+      await chrome.storage.local.set({ videoLiesCounts: videoLiesCounts });
+      console.log(`📊 New lies counted for ${videoId}: ${newLies.length} (total: ${currentStats.liesDetected})`);
+    } else if (videoId && videoLiesCounts[videoId]) {
+      console.log(`📊 Lies already counted for ${videoId}: ${videoLiesCounts[videoId]} (not adding again)`);
+    }
+    
+    // NOTE: timeSaved is now only calculated when lies are actually skipped by the user
+    // This ensures accurate time saved statistics based on actual user behavior
+    // See lieSkipped message handler in popup.js and background.js for time tracking
+    
+    await chrome.storage.local.set({ sessionStats: currentStats });
+    console.log('📊 Session stats updated:', currentStats);
+    
+    // Notify popup of stats update
+    safelySendMessageToBackground({ type: 'STATS_UPDATE' });
+    
+  } catch (error) {
+    console.error('Error updating session stats:', error);
+  }
+}
+
+// Function to store analysis results to Supabase database
+async function storeAnalysisToDatabase(videoId, lies, transcriptData) {
+  console.log('💾 Attempting to store analysis to database...');
+  console.log('💾 Window.SupabaseDB available:', !!window.SupabaseDB);
+  
+  if (!window.SupabaseDB) {
+    console.warn('⚠️ Supabase database client not available - skipping database storage');
+    console.log('💾 Available window properties:', Object.keys(window).filter(k => k.includes('Supabase')));
+    return;
+  }
+
+  try {
+    console.log('💾 Starting database storage process...');
+    // Get video metadata
+    const videoTitle = document.querySelector('h1.ytd-video-primary-info-renderer, #title h1')?.textContent?.trim() || 'Unknown Video';
+    const channelName = document.querySelector('#channel-name a, #owner-text a')?.textContent?.trim() || 'Unknown Channel';
+    const videoUrl = window.location.href.split('&')[0];
+    
+    const totalLies = lies.length;
+    const averageConfidence = totalLies > 0 ? lies.reduce((sum, lie) => sum + lie.confidence, 0) / totalLies : 0;
+    const severityBreakdown = lies.reduce((acc, lie) => {
+      acc[lie.severity] = (acc[lie.severity] || 0) + 1;
+      return acc;
+    }, { low: 0, medium: 0, high: 0 });
+
+    console.log('💾 Analysis summary:', { totalLies, averageConfidence, severityBreakdown });
+
+    // Prepare analysis data for database (matching what content script expects)
+    const analysisData = {
+      video_id: videoId,
+      video_title: videoTitle,
+      channel_name: channelName,
+      video_url: videoUrl,
+      total_lies: totalLies,
+      average_confidence: averageConfidence,
+      severity_low: severityBreakdown.low,
+      severity_medium: severityBreakdown.medium,
+      severity_high: severityBreakdown.high,
+      analysis_duration_minutes: transcriptData?.analysisDuration || 0,
+      total_segments_analyzed: transcriptData?.totalSegments || 0
+    };
+
+    console.log('💾 Storing video analysis data:', analysisData);
+
+    // Store video analysis
+    await window.SupabaseDB.storeVideoAnalysis(analysisData);
+    console.log('✅ Video analysis stored successfully');
+
+    if (totalLies > 0) {
+      // Prepare lies data for database
+      const liesData = lies.map(lie => ({
+        video_id: videoId,
+        timestamp_seconds: lie.timeInSeconds,
+        duration_seconds: lie.duration || 10,
+        claim_text: lie.claim,
+        explanation: lie.explanation,
+        confidence: lie.confidence,
+        severity: lie.severity,
+        category: lie.category || 'other',
+        created_at: new Date().toISOString()
+      }));
+
+      console.log('💾 Storing lies data:', liesData.length, 'lies');
+      await window.SupabaseDB.storeLies(liesData);
+      console.log('✅ Lies data stored successfully');
+    }
+
+    console.log(`✅ Database: Stored analysis for video ${videoId} with ${totalLies} lies`);
+    
+  } catch (error) {
+    console.error('❌ Database: Error storing analysis:', error);
+    console.error('❌ Error details:', error.message, error.stack);
+    // Don't throw the error - allow the analysis to continue even if database storage fails
+  }
 }
