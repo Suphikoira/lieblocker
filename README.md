@@ -58,11 +58,9 @@ A Chrome extension that automatically detects and skips lies in YouTube videos u
 
 ## Privacy & Security
 
-- All processing happens locally in your browser
 - API keys are stored locally and never shared
 - No user data is collected or transmitted
 - Analysis results can be stored in Supabase (optional) or cached locally
-- Supabase integration is optional and user-controlled
 
 ## Technical Details
 
