@@ -1,6 +1,23 @@
 // Background script for handling API calls and message forwarding
 // This runs in a service worker context with different CORS permissions
 
+// Helper function to safely send messages to popup
+async function safelySendMessageToPopup(message) {
+  try {
+    // Add timeout to prevent hanging
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Message timeout')), 5000);
+    });
+    
+    const sendPromise = chrome.runtime.sendMessage(message);
+    
+    await Promise.race([sendPromise, timeoutPromise]);
+  } catch (error) {
+    // Popup is closed or not available - this is expected behavior
+    console.log('Popup not available or timed out, message stored in background state:', error.message);
+  }
+}
+
 // Enhanced analysis state with persistent storage
 let analysisState = {
   isRunning: false,
@@ -95,29 +112,77 @@ async function loadAnalysisState() {
   return false;
 }
 
+// Initialize session stats on browser startup
+async function initializeSessionStats() {
+  try {
+    // Reset session stats on browser startup/extension reload
+    const sessionStats = {
+      videosAnalyzed: 0,
+      liesDetected: 0,
+      timeSaved: 0
+    };
+    
+    await chrome.storage.local.set({ sessionStats });
+    console.log('📊 Session stats initialized on startup');
+  } catch (error) {
+    console.error('Error initializing session stats:', error);
+  }
+}
+
 // Initialize background script
 chrome.runtime.onStartup.addListener(async () => {
   await loadAnalysisState();
+  await initializeSessionStats();
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
   await loadAnalysisState();
+  await initializeSessionStats();
 });
 
 // Listen for messages from content script and popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === 'analysisResult') {
+  try {
+    if (message.type === 'analysisResult') {
     // Store the analysis results in background state
     analysisState.progress = message.data;
-    if (message.data.includes('Analysis complete') || 
-        message.data.includes('loaded from cache') ||
-        message.data.includes('Error')) {
+    
+    // Handle both string and object data types safely
+    const dataString = typeof message.data === 'string' ? message.data : 
+                       typeof message.data === 'object' && message.data.message ? message.data.message :
+                       JSON.stringify(message.data);
+    
+    console.log('📨 Background: analysisResult data type:', typeof message.data, 'converted to:', typeof dataString);
+    
+    if (dataString.includes('Analysis complete') || 
+        dataString.includes('loaded from cache') ||
+        dataString.includes('Error')) {
       analysisState.isRunning = false;
       analysisState.results = message.data;
       analysisState.stage = 'complete';
-      if (message.data.includes('Error')) {
+      if (dataString.includes('Error')) {
         analysisState.error = message.data;
         analysisState.stage = 'error';
+      }
+      
+      // Create completion notification
+      if (dataString.includes('Analysis complete') || dataString.includes('loaded from cache')) {
+        try {
+          chrome.notifications.create({
+            type: 'basic',
+            iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9IiM0Mjg1RjQiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMiAxMikiPgo8cGF0aCBkPSJNMTIgMkMxMy4xIDIgMTQgMi45IDE0IDRIMT1WNkMxNS41IDYgMTYgNi41IDE2IDdWMTdDMTYgMTcuNSAxNS41IDE4IDE1IDE4SDlDOC41IDE4IDggMTcuNSA4IDE3VjdDOCA2LjUgOC41IDYgOSA2SDEwVjRDMTAgMi45IDEwLjkgMiAxMiAyWk0xMiA0QzExLjQgNCAxMSA0LjQgMTEgNVY2SDEzVjVDMTMgNC40IDEyLjYgNCAxMiA0WkMxNCAzQzE0IDMgMTQgMyAxNCAzVjJDMTYuMiAyIDE4IDMuOCAxOCA2VjE4QzE4IDIwLjIgMTYuMiAyMiAxNCAyMkgxMEMwIDIyIDggMjAuMiA4IDE4VjZDOCAzLjggOS44IDIgMTIgMloiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K',
+            title: 'LieBlocker Analysis Complete',
+            message: `Video fact-checking finished. Found ${analysisState.currentClaims.length} lies.`
+          }, (notificationId) => {
+            if (chrome.runtime.lastError) {
+              console.warn('Notification creation failed:', chrome.runtime.lastError.message);
+            } else {
+              console.log('✅ Analysis completion notification created:', notificationId);
+            }
+          });
+        } catch (notificationError) {
+          console.warn('Failed to create analysis completion notification:', notificationError);
+        }
       }
     }
     
@@ -125,12 +190,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     saveAnalysisState();
     
     // Forward analysis results to popup (if it's open)
-    try {
-      chrome.runtime.sendMessage(message);
-    } catch (error) {
-      // Popup might be closed, that's okay - we're storing the state
-      console.log('Popup closed, storing analysis state in background');
-    }
+    safelySendMessageToPopup(message);
+    sendResponse({ success: true });
   } else if (message.type === 'analysisProgress') {
     // Handle progress updates with visual cues
     analysisState.stage = message.stage;
@@ -140,11 +201,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     saveAnalysisState();
     
     // Forward to popup
-    try {
-      chrome.runtime.sendMessage(message);
-    } catch (error) {
-      console.log('Popup closed, storing progress update in background');
-    }
+    safelySendMessageToPopup(message);
+    sendResponse({ success: true });
   } else if (message.type === 'liesUpdate') {
     // Handle real-time lies updates
     analysisState.currentClaims = message.claims || [];
@@ -161,25 +219,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       analysisState.stage = 'complete';
     }
     
+    // Create notification for high-severity lies
+    if (!message.isComplete && message.claims && message.claims.length > 0) {
+      const highSeverityLies = message.claims.filter(c => c.severity === 'critical').length;
+      
+      if (highSeverityLies > 0) {
+        try {
+          chrome.notifications.create({
+            type: 'basic',
+            iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9IiNEQzM1NDUiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMiAxMikiPgo8cGF0aCBkPSJNMTIgMkMyIDIgMiAxMiAyIDEyUzIgMjIgMTIgMjJTMjIgMTIgMjIgMTJTMjIgMiAxMiAyWk0xMiA3QzEyLjUgNyAxMyA3LjUgMTMgOFYxMkMxMyAxMi41IDEyLjUgMTMgMTIgMTNTMTEgMTIuNSAxMSAxMlY4QzExIDcuNSAxMS41IDcgMTIgN1pNMTIgMTVDMTIuNSAxNSAxMyAxNS41IDEzIDE2UzEyLjUgMTcgMTIgMTdTMTEgMTYuNSAxMSAxNlMxMS41IDE1IDEyIDE1WiIgZmlsbD0id2hpdGUiLz4KPC9zdmc+Cjwvc3ZnPgo=',
+            title: 'Lies Detected!',
+            message: `Found ${highSeverityLies} lies in video analysis. Check the extension for details.`
+          }, (notificationId) => {
+            if (chrome.runtime.lastError) {
+              console.warn('Notification creation failed:', chrome.runtime.lastError.message);
+            } else {
+              console.log('🚨 Lies detected notification created:', notificationId);
+            }
+          });
+        } catch (notificationError) {
+          console.warn('Failed to create lies detection notification:', notificationError);
+        }
+      }
+    }
+    
     // Save state persistently
     saveAnalysisState();
     
     // Forward to popup
-    try {
-      chrome.runtime.sendMessage(message);
-    } catch (error) {
-      console.log('Popup closed, storing lies update in background');
-    }
-  } else if (message.type === 'getTranscript') {
-    // Handle transcript extraction in background script
-    handleTranscriptRequest(message.data)
-      .then(result => {
-        sendResponse({ success: true, data: result });
-      })
-      .catch(error => {
-        sendResponse({ success: false, error: error.message });
-      });
-    return true; // Keep message channel open for async response
+    safelySendMessageToPopup(message);
+    sendResponse({ success: true });
   } else if (message.type === 'startAnalysis') {
     // Track analysis start
     analysisState.isRunning = true;
@@ -209,11 +278,26 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const videoId = message.videoId;
     if (videoId) {
       loadCurrentVideoLies(videoId).then(lies => {
-        sendResponse({ 
-          success: true, 
-          lies: lies,
-          videoId: videoId 
-        });
+        try {
+          sendResponse({ 
+            success: true, 
+            lies: lies,
+            videoId: videoId 
+          });
+        } catch (error) {
+          console.error('Error sending getCurrentVideoLies response:', error);
+        }
+      }).catch(error => {
+        console.error('Error loading current video lies:', error);
+        try {
+          sendResponse({ 
+            success: false, 
+            lies: [],
+            error: error.message 
+          });
+        } catch (sendError) {
+          console.error('Error sending error response:', sendError);
+        }
       });
     } else {
       sendResponse({ 
@@ -255,310 +339,59 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   } else if (message.type === 'cacheUpdated') {
     // Handle cache updates
-    try {
-      chrome.runtime.sendMessage(message);
-    } catch (error) {
-      console.log('Popup closed, cache update stored in background');
-    }
+    safelySendMessageToPopup(message);
+    sendResponse({ success: true });
   } else if (message.type === 'lieSkipped') {
     // NEW: Handle lie skip tracking for accurate time saved calculation
     console.log('⏭️ Background: Lie skipped:', message);
     
-    // Forward to popup for stats update
-    try {
-      chrome.runtime.sendMessage(message);
-    } catch (error) {
-      console.log('Popup closed, lie skip stored in background');
-    }
-  }
-  
-  // Must return true if response is async
-  return true;
-});
-
-// Enhanced function to extract transcript using multiple providers with DOM as default
-async function handleTranscriptRequest(requestData) {
-  const { videoId, currentUrl } = requestData;
-  
-  try {
-    console.log('🎬 Background: Extracting transcript for video:', videoId);
-    console.log('🌐 Background: URL being processed:', currentUrl);
-    
-    // Get transcript provider setting (default to 'dom')
-    const settings = await chrome.storage.sync.get(['transcriptProvider']);
-    const provider = settings.transcriptProvider || 'dom';
-    
-    console.log('📡 Background: Using transcript provider:', provider);
-    
-    if (provider === 'dom') {
-      return await extractTranscriptFromDOM(videoId, currentUrl);
-    } else if (provider === 'alternative') {
-      return await extractTranscriptFromAlternativeAPI(videoId, currentUrl);
-    } else if (provider === 'supadata') {
-      return await extractTranscriptFromSupadata(videoId, currentUrl);
-    } else {
-      // Default fallback to DOM
-      return await extractTranscriptFromDOM(videoId, currentUrl);
-    }
-
-  } catch (error) {
-    console.error('❌ Background: Error extracting transcript:', error);
-    
-    // Try fallback methods if primary method fails
-    console.log('🔄 Background: Trying fallback transcript methods...');
-    
-    try {
-      // Try DOM first as it's most reliable
-      if (provider !== 'dom') {
-        console.log('🔄 Background: Fallback to DOM extraction...');
-        return await extractTranscriptFromDOM(videoId, currentUrl);
+    // Update time saved statistics in background storage
+    (async () => {
+      try {
+        const result = await chrome.storage.local.get(['sessionStats']);
+        const stats = result.sessionStats || {
+          videosAnalyzed: 0,
+          liesDetected: 0,
+          timeSaved: 0
+        };
+        
+        // Add the skipped lie duration to time saved
+        stats.timeSaved += (message.duration || 10);
+        
+        await chrome.storage.local.set({ sessionStats: stats });
+        console.log(`⏭️ Background: Time saved updated: +${message.duration || 10}s (total: ${stats.timeSaved}s)`);
+        
+        // Forward to popup for UI update
+        await safelySendMessageToPopup(message);
+        
+        sendResponse({ success: true });
+      } catch (error) {
+        console.error('Error handling lieSkipped:', error);
+        sendResponse({ success: false, error: error.message });
       }
-      
-      // Then try alternative API
-      if (provider !== 'alternative') {
-        console.log('🔄 Background: Fallback to alternative API...');
-        return await extractTranscriptFromAlternativeAPI(videoId, currentUrl);
-      }
-      
-      // Finally try Supadata
-      if (provider !== 'supadata') {
-        console.log('🔄 Background: Fallback to Supadata API...');
-        return await extractTranscriptFromSupadata(videoId, currentUrl);
-      }
-      
-    } catch (fallbackError) {
-      console.error('❌ Background: All transcript methods failed:', fallbackError);
-      throw new Error('All transcript extraction methods failed. Please ensure the video has captions available.');
-    }
+    })();
     
-    throw error;
-  }
-}
-
-// NEW: Extract transcript from DOM (default method)
-async function extractTranscriptFromDOM(videoId, currentUrl) {
-  console.log('📋 Background: Extracting transcript from DOM...');
-  
-  // Send message to content script to extract transcript from DOM
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) {
-    throw new Error('No active tab found');
-  }
-  
-  return new Promise((resolve, reject) => {
-    chrome.tabs.sendMessage(tab.id, {
-      type: 'extractDOMTranscript'
-    }, (response) => {
-      if (chrome.runtime.lastError) {
-        reject(new Error(chrome.runtime.lastError.message));
-        return;
-      }
-      
-      if (!response || !response.success) {
-        reject(new Error(response?.error || 'Failed to extract DOM transcript'));
-        return;
-      }
-      
-      console.log('✅ Background: DOM transcript extracted successfully');
-      resolve(response.data);
-    });
-  });
-}
-
-// NEW: Extract transcript from alternative YouTube transcript API
-async function extractTranscriptFromAlternativeAPI(videoId, currentUrl) {
-  console.log('📋 Background: Extracting transcript from alternative API...');
-  
-  const apiUrl = `https://youtube-transcript-api-4c8m.onrender.com/transcript?video_id=${videoId}`;
-  
-  console.log('📡 Background: Making request to alternative API:', apiUrl);
-  
-  const response = await fetch(apiUrl, {
-    method: 'GET',
-    headers: {
-      'Content-Type': 'application/json'
-    }
-  });
-
-  console.log('📡 Background: Alternative API response status:', response.status);
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('❌ Background: Alternative API Error Response:', errorText);
-    throw new Error(`Alternative API error! status: ${response.status}, message: ${errorText}`);
-  }
-
-  const result = await response.json();
-  console.log('📋 Background: Alternative API response received');
-  
-  // Transform alternative API format to our expected format
-  if (!result || !Array.isArray(result)) {
-    console.error('❌ Background: Invalid response structure from alternative API:', result);
-    throw new Error('No transcript content found in alternative API response');
-  }
-  
-  // Alternative API format: [{ text, start, duration }]
-  const transcript = result.map(segment => ({
-    text: segment.text,
-    start: segment.start, // Already in seconds
-    duration: segment.duration || 5 // Default duration if not provided
-  }));
-  
-  console.log('✅ Background: Successfully processed alternative API transcript');
-  console.log(`✅ Background: ${transcript.length} transcript segments processed`);
-  
-  return transcript;
-}
-
-// Extract transcript from Supadata API (existing method)
-async function extractTranscriptFromSupadata(videoId, currentUrl) {
-  console.log('📋 Background: Extracting transcript from Supadata API...');
-  
-  // Get Supadata token from storage
-  const tokenResult = await chrome.storage.local.get(['supadataToken']);
-  const supadataToken = tokenResult.supadataToken;
-  
-  if (!supadataToken) {
-    throw new Error('Supadata API token not configured. Please set your token in the extension settings.');
-  }
-  
-  // Build the API URL with query parameters and force English language
-  const apiUrl = new URL('https://api.supadata.ai/v1/youtube/transcript');
-  apiUrl.searchParams.append('url', currentUrl);
-  apiUrl.searchParams.append('lang', 'en'); // Force English language
-  
-  console.log('📡 Background: Making GET request to:', apiUrl.toString());
-  console.log('🇺🇸 Background: Forcing English language transcript');
-  
-  const response = await fetch(apiUrl.toString(), {
-    method: 'GET',
-    headers: {
-      'x-api-key': supadataToken,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  console.log('📡 Background: Response status:', response.status);
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error('❌ Background: API Error Response:', errorText);
-    
-    // If English transcript is not available, try without language parameter as fallback
-    if (response.status === 404 || errorText.includes('language') || errorText.includes('transcript')) {
-      console.log('🔄 Background: English transcript not available, trying auto-detect...');
-      
-      // Retry without language parameter
-      const fallbackUrl = new URL('https://api.supadata.ai/v1/youtube/transcript');
-      fallbackUrl.searchParams.append('url', currentUrl);
-      
-      const fallbackResponse = await fetch(fallbackUrl.toString(), {
-        method: 'GET',
-        headers: {
-          'x-api-key': supadataToken,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (!fallbackResponse.ok) {
-        const fallbackErrorText = await fallbackResponse.text();
-        throw new Error(`No transcript available. Status: ${fallbackResponse.status}, message: ${fallbackErrorText}`);
-      }
-      
-      const fallbackResult = await fallbackResponse.json();
-      console.log('📋 Background: Fallback transcript received');
-      console.log('📋 Background: Language:', fallbackResult.lang);
-      
-      // Check if the fallback transcript is in English
-      if (fallbackResult.lang && fallbackResult.lang.toLowerCase() !== 'en') {
-        console.warn('⚠️ Background: Video transcript is not in English. Language detected:', fallbackResult.lang);
-        console.warn('⚠️ Background: Proceeding with non-English transcript - results may be less accurate');
-      }
-      
-      return processSupadataTranscriptResponse(fallbackResult);
-    }
-    
-    throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
-  }
-
-  const result = await response.json();
-  console.log('📋 Background: English transcript API Response received');
-  console.log('📋 Background: Language:', result.lang);
-  console.log('📋 Background: Available languages:', result.availableLangs);
-  
-  // Verify we got English transcript
-  if (result.lang && result.lang.toLowerCase() !== 'en') {
-    console.warn('⚠️ Background: Expected English but got:', result.lang);
-    console.warn('⚠️ Background: Proceeding anyway - results may be less accurate');
+    return true;
+  } else if (message.type === 'STATS_UPDATE') {
+    // Handle stats updates - just forward to popup
+    safelySendMessageToPopup(message);
+    sendResponse({ success: true });
   } else {
-    console.log('✅ Background: Confirmed English transcript received');
+    // For any other message types, send a basic response
+    sendResponse({ success: true, message: 'Message received' });
   }
   
-  return processSupadataTranscriptResponse(result);
-}
-
-// Helper function to process Supadata transcript response
-function processSupadataTranscriptResponse(result) {
-  // Extract transcript from the 'content' array in Supadata response
-  if (!result.content || !Array.isArray(result.content)) {
-    console.error('❌ Background: Invalid response structure - no content array:', result);
-    throw new Error('No transcript content found in Supadata API response');
-  }
-  
-  // Transform Supadata format to our expected format
-  // Supadata uses: { text, offset (ms), duration (ms), lang }
-  // We need: { text, start (seconds) }
-  const transcript = result.content.map(segment => ({
-    text: segment.text,
-    start: segment.offset / 1000, // Convert milliseconds to seconds
-    duration: segment.duration / 1000 // Convert milliseconds to seconds (for reference)
-  }));
-  
-  console.log('✅ Background: Successfully processed Supadata transcript');
-  console.log(`✅ Background: ${transcript.length} transcript segments processed`);
-  console.log('📋 Background: Sample transformed segment:', transcript[0]);
-  
-  // Log language information for debugging
-  if (result.lang) {
-    console.log(`🌐 Background: Final transcript language: ${result.lang}`);
-    if (result.lang.toLowerCase() !== 'en') {
-      console.warn('⚠️ Background: WARNING - Transcript is not in English, lie detection accuracy may be reduced');
-    }
-  }
-  
-  return transcript;
-}
-
-// Enhanced notification system for analysis completion
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'analysisResult' && 
-      (message.data.includes('Analysis complete') || message.data.includes('loaded from cache'))) {
-    
-    // Create notification to let user know analysis is done
-    chrome.notifications.create({
-      type: 'basic',
-      iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiMzNGE4NTMiLz4KPHN2ZyB4PSIxMiIgeT0iMTIiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIj4KPHA+dGggZD0iTTkgMTJsMyAzIDYtNiIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyIiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiLz4KPC9zdmc+Cjwvc3ZnPgo=',
-      title: 'LieBlocker Analysis Complete',
-      message: `Video fact-checking finished. Found ${analysisState.currentClaims.length} lies.`
-    });
+  // Return true to indicate we will respond asynchronously
+  return true;
+  } catch (error) {
+    console.error('Error in background message handler:', error);
+    // Still return true to keep message channel open
+    return true;
   }
 });
 
-// Notification for real-time lies discovery
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === 'liesUpdate' && !message.isComplete && message.claims && message.claims.length > 0) {
-    const highSeverityLies = message.claims.filter(c => c.severity === 'critical').length;
-    
-    if (highSeverityLies > 0) {
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KP2NpcmNsZSBjeD0iMjQiIGN5PSIyNCIgcj0iMjQiIGZpbGw9IiNkYzM1NDUiLz4KPHN2ZyB4PSIxMiIgeT0iMTIiIHdpZHRoPSIyNCIgaGVpZ2h0PSIyNCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIj4KPHA+dGggZD0iTTEyIDl2NGwtMyAzaDZ6IiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgo8L3N2Zz4KPC9zdmc+Cg==',
-        title: 'Lies Detected!',
-        message: `Found ${highSeverityLies} lies in video analysis. Check the extension for details.`
-      });
-    }
-  }
-});
+// Enhanced notification system for analysis completion and lies discovery
+// This functionality is now integrated into the main message handler above
 
 // Periodic cleanup of old analysis states and video lies data
 setInterval(async () => {
