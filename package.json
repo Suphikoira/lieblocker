@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && cp manifest.json dist/ && cp popup.js dist/",
     "preview": "vite preview"
   },
   "dependencies": {
