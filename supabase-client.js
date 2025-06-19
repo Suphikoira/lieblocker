@@ -120,15 +120,12 @@
         const url = `${this.client.url}/rest/v1/${this.table}`;
         const payload = Array.isArray(data) ? data : [data];
         
-        // Validate and sanitize data before insertion
-        const sanitizedPayload = this.sanitizeData(payload);
-        
-        console.log('📝 Supabase INSERT request:', url, sanitizedPayload);
+        console.log('📝 Supabase INSERT request:', url, payload);
         
         const response = await fetch(url, {
           method: 'POST',
           headers: this.client.headers,
-          body: JSON.stringify(sanitizedPayload)
+          body: JSON.stringify(payload)
         });
         
         console.log('📡 Supabase INSERT response:', response.status, response.statusText);
@@ -166,9 +163,6 @@
         let url = `${this.client.url}/rest/v1/${this.table}`;
         const payload = Array.isArray(data) ? data : [data];
         
-        // Validate and sanitize data before insertion
-        const sanitizedPayload = this.sanitizeData(payload);
-        
         const headers = {
           ...this.client.headers
         };
@@ -181,13 +175,13 @@
           headers['Prefer'] = 'return=representation,resolution=merge-duplicates';
         }
         
-        console.log('🔄 Supabase UPSERT request:', url, sanitizedPayload);
+        console.log('🔄 Supabase UPSERT request:', url, payload);
         console.log('🔄 Supabase UPSERT headers:', headers);
         
         const response = await fetch(url, {
           method: 'POST',
           headers,
-          body: JSON.stringify(sanitizedPayload)
+          body: JSON.stringify(payload)
         });
         
         console.log('📡 Supabase UPSERT response:', response.status, response.statusText);
@@ -218,49 +212,6 @@
         console.error('❌ Supabase upsert error:', error);
         return { data: null, error };
       }
-    }
-    
-    // Data sanitization and validation
-    sanitizeData(payload) {
-      if (this.table === 'detected_lies') {
-        return payload.map(item => ({
-          ...item,
-          // Ensure severity is one of the allowed values
-          severity: this.validateSeverity(item.severity),
-          // Ensure confidence is between 0 and 1
-          confidence: Math.max(0, Math.min(1, parseFloat(item.confidence) || 0)),
-          // Ensure timestamp is a valid integer
-          timestamp_seconds: parseInt(item.timestamp_seconds) || 0,
-          // Ensure duration is a positive integer
-          duration_seconds: Math.max(1, parseInt(item.duration_seconds) || 10),
-          // Ensure text fields are strings
-          claim_text: String(item.claim_text || ''),
-          explanation: String(item.explanation || ''),
-          category: String(item.category || 'other')
-        }));
-      }
-      
-      return payload;
-    }
-    
-    validateSeverity(severity) {
-      const allowedSeverities = ['low', 'medium', 'high', 'critical'];
-      const normalizedSeverity = String(severity || 'medium').toLowerCase();
-      
-      if (allowedSeverities.includes(normalizedSeverity)) {
-        return normalizedSeverity;
-      }
-      
-      // Map common variations to valid values
-      const severityMap = {
-        'minor': 'low',
-        'moderate': 'medium',
-        'major': 'high',
-        'severe': 'high',
-        'extreme': 'critical'
-      };
-      
-      return severityMap[normalizedSeverity] || 'medium';
     }
   }
   
@@ -475,19 +426,17 @@
         
         const latestAnalysis = analyses[0];
         
-        // Map lies data to match database schema with proper validation
+        // Map lies data to match database schema
         const dbLiesData = liesData.map(lie => ({
           analysis_id: latestAnalysis.id,
-          timestamp_seconds: parseInt(lie.timestamp_seconds) || 0,
-          duration_seconds: Math.max(1, parseInt(lie.duration_seconds) || 10),
-          claim_text: String(lie.claim_text || '').substring(0, 1000), // Limit length
-          explanation: String(lie.explanation || '').substring(0, 2000), // Limit length
-          confidence: Math.max(0, Math.min(1, parseFloat(lie.confidence) || 0)),
-          severity: this.validateSeverity(lie.severity),
-          category: String(lie.category || 'other').substring(0, 100) // Limit length
+          timestamp_seconds: lie.timestamp_seconds,
+          duration_seconds: lie.duration_seconds || 10,
+          claim_text: lie.claim_text,
+          explanation: lie.explanation,
+          confidence: lie.confidence,
+          severity: lie.severity,
+          category: lie.category || 'other'
         }));
-        
-        console.log('📝 Sanitized lies data for database:', dbLiesData);
         
         const result = await this.createDetectedLies(dbLiesData);
         console.log('✅ Lies stored successfully');
@@ -497,27 +446,6 @@
         console.error('❌ Error storing lies:', error);
         throw error;
       }
-    },
-    
-    // Severity validation helper
-    validateSeverity(severity) {
-      const allowedSeverities = ['low', 'medium', 'high', 'critical'];
-      const normalizedSeverity = String(severity || 'medium').toLowerCase();
-      
-      if (allowedSeverities.includes(normalizedSeverity)) {
-        return normalizedSeverity;
-      }
-      
-      // Map common variations to valid values
-      const severityMap = {
-        'minor': 'low',
-        'moderate': 'medium',
-        'major': 'high',
-        'severe': 'high',
-        'extreme': 'critical'
-      };
-      
-      return severityMap[normalizedSeverity] || 'medium';
     },
 
     // Analytics
