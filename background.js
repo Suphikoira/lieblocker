@@ -47,7 +47,7 @@ function buildSystemPrompt(analysisDuration) {
 
 DETECTION CRITERIA:
 - Only flag factual claims, not opinions or predictions
-- Require very high confidence (90%+) before flagging
+- Require very high confidence (85%+) before flagging
 - Focus on clear, verifiable false claims with strong evidence
 - Be specific about what makes each claim problematic
 - Consider context and intent
@@ -55,9 +55,6 @@ DETECTION CRITERIA:
 
 RESPONSE FORMAT:
 Respond with a JSON object containing an array of claims. Each claim should have:
-- "timestamp": The exact timestamp from the transcript (e.g., "2:34")
-- "timeInSeconds": Timestamp converted to seconds (e.g., 154)
-- "duration": Estimated duration of the lie in seconds (5-30, based on actual complexity)
 - "claim": The specific false or misleading statement (exact quote from transcript)
 - "explanation": Why this claim is problematic (1-2 sentences)
 - "confidence": Your confidence level (0.0-1.0)
@@ -67,9 +64,6 @@ Example response:
 {
   "claims": [
     {
-      "timestamp": "1:23",
-      "timeInSeconds": 83,
-      "duration": 12,
       "claim": "Vaccines contain microchips",
       "explanation": "This is a debunked conspiracy theory with no scientific evidence.",
       "confidence": 0.95,
