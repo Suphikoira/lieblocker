@@ -889,19 +889,26 @@ function renderLiesDetails(lies, filterSeverity = null) {
     const timestamp = lie.timestamp || '0:00';
     const timeInSeconds = lie.timeInSeconds || parseTimestampToSeconds(timestamp);
     const duration = lie.duration || 10;
+    const severityClass = lie.severity || 'medium';
+    const severityEmoji = {
+      'low': '🟡',
+      'medium': '🟠', 
+      'high': '🔴'
+    }[severityClass] || '🟠';
     
     return `
       <div class="lie-item clickable-lie-item" data-timestamp="${timeInSeconds}" data-timestamp-text="${timestamp}">
-        <div class="lie-header">
-          <span class="lie-number">🚨 ${index + 1}.</span>
+        <div class="lie-timestamp-badge" title="Click to jump to ${timestamp}">
+          <span class="timestamp-icon">⏱️</span>
+          <span class="timestamp-value">${timestamp}</span>
         </div>
-        <div class="lie-text">"${lie.claim || 'No lie text available'}"</div>
+        <div class="lie-text"><span class="lie-number">${severityEmoji} ${index + 1}.</span> "${lie.claim || 'No lie text available'}"</div>
         <div class="lie-explanation">
           <strong>Fact-check:</strong> ${lie.explanation || 'No explanation available'}
         </div>
         <div class="lie-meta">
           <span class="lie-confidence">Confidence: ${Math.round((lie.confidence || 0) * 100)}%</span>
-          <span class="lie-severity ${lie.severity || 'medium'}">${(lie.severity || 'medium').toUpperCase()}</span>
+          <span class="lie-severity-badge ${severityClass}">${severityClass.toUpperCase()}</span>
         </div>
       </div>
     `;
