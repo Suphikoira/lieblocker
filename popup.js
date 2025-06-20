@@ -109,11 +109,12 @@
       aiProviderSelect.addEventListener('change', handleAIProviderChange);
     }
     
-    // API Key input
+    // API Key input with immediate save on blur and debounced save on input
     const apiKeyInput = document.getElementById('api-key');
     if (apiKeyInput) {
       apiKeyInput.addEventListener('input', debounce(saveSettings, 1000));
       apiKeyInput.addEventListener('blur', saveSettings);
+      apiKeyInput.addEventListener('change', saveSettings);
     }
     
     // Analysis duration
@@ -312,6 +313,7 @@
   
   async function loadSettings() {
     try {
+      // Load all settings from storage
       const result = await chrome.storage.local.get([
         'aiProvider',
         'openaiModel',
@@ -320,6 +322,8 @@
         'analysisDuration',
         'skipLiesEnabled'
       ]);
+      
+      console.log('📋 Loading settings:', { ...result, apiKey: result.apiKey ? '[HIDDEN]' : 'NOT SET' });
       
       // AI Provider
       const aiProviderSelect = document.getElementById('ai-provider');
@@ -340,10 +344,11 @@
         geminiModelSelect.value = result.geminiModel || 'gemini-2.0-flash-exp';
       }
       
-      // API Key
+      // API Key - this is the critical part for persistence
       const apiKeyInput = document.getElementById('api-key');
       if (apiKeyInput) {
         apiKeyInput.value = result.apiKey || '';
+        console.log('🔑 API key loaded:', result.apiKey ? 'YES' : 'NO');
       }
       
       // Analysis Duration
@@ -365,6 +370,7 @@
       
     } catch (error) {
       console.error('❌ Error loading settings:', error);
+      showNotification('Failed to load settings', 'error');
     }
   }
   
@@ -399,6 +405,7 @@
   
   async function saveSettings() {
     try {
+      // Get all current values from the form
       const settings = {
         aiProvider: document.getElementById('ai-provider')?.value || 'openai',
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
@@ -407,10 +414,14 @@
         analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 20
       };
       
+      console.log('💾 Saving settings:', { ...settings, apiKey: settings.apiKey ? '[HIDDEN]' : 'EMPTY' });
+      
+      // Save to Chrome storage
       await chrome.storage.local.set(settings);
       
+      console.log('✅ Settings saved successfully');
+      
       // Show success message briefly
-      const apiKeyInput = document.getElementById('api-key');
       const successMsg = document.getElementById('api-key-success');
       const errorMsg = document.getElementById('api-key-error');
       
@@ -424,6 +435,10 @@
         }, 2000);
       }
       
+      // Verify the save worked by reading it back
+      const verification = await chrome.storage.local.get(['apiKey']);
+      console.log('🔍 Verification - API key saved:', verification.apiKey ? 'YES' : 'NO');
+      
     } catch (error) {
       console.error('❌ Error saving settings:', error);
       
@@ -432,6 +447,8 @@
         errorMsg.textContent = 'Failed to save settings';
         errorMsg.style.display = 'block';
       }
+      
+      showNotification('Failed to save settings', 'error');
     }
   }
   
