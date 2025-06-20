@@ -574,7 +574,8 @@
       padding: 16px;
       margin-bottom: 12px;
       transition: all 0.2s ease;
-      position: relative;
+      position: relative !important;
+      overflow: visible;
     }
     
     .clickable-lie-item {
@@ -587,20 +588,91 @@
       box-shadow: 0 2px 8px rgba(66, 133, 244, 0.1);
       transform: translateY(-1px);
     }
-    
-    .lie-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 8px;
-    }
-    
+
     .lie-number {
-      font-weight: 600;
+      font-weight: 700;
       color: #4285f4;
       font-size: 14px;
+      margin-right: 8px;
     }
     
+    .lie-severity-badge {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      height: fit-content;
+    }
+    
+    .lie-severity-badge.high {
+      background: #fef2f2;
+      color: #dc2626;
+      border: 1px solid #fecaca;
+    }
+    
+    .lie-severity-badge.medium {
+      background: #fffbeb;
+      color: #f59e0b;
+      border: 1px solid #fed7aa;
+    }
+    
+    .lie-severity-badge.low {
+      background: #fefce8;
+      color: #eab308;
+      border: 1px solid #fef3c7;
+    }
+
+    /* Enhanced timestamp badge in top-right corner */
+    .lie-timestamp-badge {
+      position: absolute !important;
+      top: 8px !important;
+      right: 8px !important;
+      left: auto !important;
+      display: inline-flex !important;
+      align-items: center;
+      gap: 4px;
+      background: linear-gradient(135deg, #4285f4 0%, #1a73e8 100%);
+      color: white;
+      padding: 5px 12px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 700;
+      box-shadow: 0 1.5px 4px rgba(66, 133, 244, 0.32);
+      cursor: pointer;
+      transition: all 0.2s ease;
+      user-select: none;
+      z-index: 10;
+      white-space: nowrap;
+      width: auto;
+      max-width: 90px;
+      overflow: hidden;
+      float: none !important;
+      margin: 0 !important;
+    }
+
+    .lie-timestamp-badge:hover {
+      transform: scale(1.07);
+      box-shadow: 0 2.5px 7px rgba(66, 133, 244, 0.45);
+    }
+    
+    .timestamp-icon {
+      font-size: 12px;
+    }
+
+    .timestamp-value {
+      font-family: 'SF Mono', 'Monaco', 'Cascadia Code', monospace;
+      font-weight: 700;
+      letter-spacing: 0.1px;
+      font-size: 11px;
+    }
+
+    .duration-info {
+      font-size: 8px;
+      opacity: 0.8;
+      font-weight: 500;
+    }
+
     .lie-timestamp {
       font-size: 11px;
       color: #5f6368;
@@ -609,7 +681,7 @@
       border-radius: 4px;
       font-weight: 500;
     }
-    
+
     .clickable-lie-item .lie-timestamp {
       background: #4285f4;
       color: white;
@@ -621,6 +693,8 @@
       color: #3c4043;
       font-size: 13px;
       line-height: 1.4;
+      padding-right: 70px; /* Further reduced space for ultra-compact timestamp badge */
+      margin-top: 15px; /* 5px space from timestamp badge */
     }
     
     .lie-explanation {
@@ -629,19 +703,19 @@
       line-height: 1.4;
       margin-bottom: 8px;
     }
-    
-    .lie-meta {
+     .lie-meta {
       display: flex;
       justify-content: space-between;
       align-items: center;
       font-size: 11px;
+      margin-top: 8px;
     }
-    
+
     .lie-confidence {
       color: #34a853;
       font-weight: 500;
     }
-    
+
     .lie-severity {
       padding: 2px 8px;
       border-radius: 4px;
@@ -772,6 +846,53 @@
       color: #5f6368;
       margin-top: 6px;
       line-height: 1.4;
+    }
+
+    /* Responsive design for timestamp badges */
+    @media (max-width: 380px) {
+      .lie-timestamp-badge {
+        position: static;
+        margin-bottom: 6px;
+        align-self: flex-start;
+        font-size: 10px;
+        padding: 4px 8px;
+        gap: 3px;
+        border-radius: 10px;
+        max-width: none;
+        width: auto;
+        display: inline-flex;
+      }
+      
+      .lie-text {
+        padding-right: 0;
+        margin-top: 16px;
+      }
+      
+      .timestamp-icon {
+        font-size: 10px;
+      }
+      
+      .timestamp-value {
+        font-size: 10px;
+      }
+    }
+
+    /* Enhanced lie item hover states */
+    .clickable-lie-item {
+      transition: all 0.2s ease;
+    }
+
+    .clickable-lie-item:hover .lie-timestamp-badge {
+      transform: scale(1.1);
+      box-shadow: 0 4px 12px rgba(66, 133, 244, 0.5);
+    }
+
+    .clickable-lie-item:active {
+      transform: scale(0.98);
+    }
+
+    .clickable-lie-item:active .lie-timestamp-badge {
+      transform: scale(1.05);
     }
   </style>
 </head>
