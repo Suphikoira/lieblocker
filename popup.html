@@ -759,65 +759,6 @@
       display: none;
     }
     
-    /* Download Links Styles */
-    .download-links {
-      margin-top: 12px;
-      padding: 12px;
-      background: #f8f9fa;
-      border-radius: 8px;
-      border: 1px solid #e8eaed;
-    }
-    
-    .download-link {
-      display: inline-block;
-      padding: 8px 12px;
-      margin: 4px 4px 4px 0;
-      background: #4285f4;
-      color: white;
-      text-decoration: none;
-      border-radius: 6px;
-      font-size: 11px;
-      font-weight: 500;
-      transition: all 0.2s ease;
-      cursor: pointer;
-      border: none;
-    }
-    
-    .download-link:hover {
-      background: #1a73e8;
-      transform: translateY(-1px);
-      box-shadow: 0 2px 4px rgba(66, 133, 244, 0.3);
-    }
-    
-    .download-link:active {
-      transform: translateY(0);
-    }
-    
-    .download-link.disabled {
-      background: #dadce0;
-      color: #5f6368;
-      cursor: not-allowed;
-      transform: none;
-      box-shadow: none;
-    }
-    
-    .download-link.disabled:hover {
-      background: #dadce0;
-      transform: none;
-      box-shadow: none;
-    }
-    
-    .download-section {
-      margin-top: 8px;
-    }
-    
-    .download-label {
-      font-size: 12px;
-      color: #5f6368;
-      margin-bottom: 6px;
-      font-weight: 500;
-    }
-
     /* Analysis Duration Setting Styles */
     .duration-setting {
       display: flex;
@@ -936,19 +877,6 @@
         
         <div class="action-buttons">
           <button class="btn btn-primary" id="analyze-current">Analyze Current Video</button>
-        </div>
-        
-        <!-- Download Links Section -->
-        <div class="stats-card" id="download-section" style="display: none;">
-          <div class="stats-title">
-            <span>📥</span>
-            <span>Download Raw Data</span>
-          </div>
-          
-          <div class="download-section">
-            <div class="download-label">Detected Lies:</div>
-            <button class="download-link disabled" id="download-lies-data">🚨 Detected Lies</button>
-          </div>
         </div>
       </div>
       

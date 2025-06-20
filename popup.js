@@ -93,9 +93,6 @@
     // Settings
     setupSettingsListeners();
     
-    // Download buttons
-    setupDownloadListeners();
-    
     // Lies circle click
     const liesCircle = document.getElementById('lies-circle');
     if (liesCircle) {
@@ -148,13 +145,6 @@
     const exportBtn = document.getElementById('export-settings');
     if (exportBtn) {
       exportBtn.addEventListener('click', exportSettings);
-    }
-  }
-  
-  function setupDownloadListeners() {
-    const downloadLiesBtn = document.getElementById('download-lies-data');
-    if (downloadLiesBtn) {
-      downloadLiesBtn.addEventListener('click', downloadLiesData);
     }
   }
   
@@ -546,24 +536,6 @@
     
     // Update lies list
     updateLiesList();
-    
-    // Update download button
-    const downloadBtn = document.getElementById('download-lies-data');
-    if (downloadBtn) {
-      if (currentVideoLies.length > 0) {
-        downloadBtn.classList.remove('disabled');
-        downloadBtn.textContent = `🚨 Detected Lies (${currentVideoLies.length})`;
-      } else {
-        downloadBtn.classList.add('disabled');
-        downloadBtn.textContent = '🚨 Detected Lies';
-      }
-    }
-    
-    // Show/hide download section
-    const downloadSection = document.getElementById('download-section');
-    if (downloadSection) {
-      downloadSection.style.display = currentVideoLies.length > 0 ? 'block' : 'none';
-    }
   }
   
   function updateLiesList() {
@@ -740,32 +712,6 @@
     } catch (error) {
       console.error('❌ Error exporting settings:', error);
       showNotification('Failed to export settings', 'error');
-    }
-  }
-  
-  function downloadLiesData() {
-    if (currentVideoLies.length === 0) {
-      showNotification('No lies data to download', 'warning');
-      return;
-    }
-    
-    try {
-      const dataStr = JSON.stringify(currentVideoLies, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `lies-data-${Date.now()}.json`;
-      link.click();
-      
-      URL.revokeObjectURL(url);
-      
-      showNotification('Lies data downloaded', 'success');
-      
-    } catch (error) {
-      console.error('❌ Error downloading lies data:', error);
-      showNotification('Failed to download lies data', 'error');
     }
   }
   
