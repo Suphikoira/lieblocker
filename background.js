@@ -1,5 +1,5 @@
-// Background script for handling API calls and message forwarding
-// This runs in a service worker context with different CORS permissions
+// Enhanced YouTube transcript extraction with auto-generated transcript priority
+// This background script runs in a service worker context with different CORS permissions
 
 // Helper function to safely send messages to popup
 async function safelySendMessageToPopup(message) {
@@ -170,7 +170,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try {
           chrome.notifications.create({
             type: 'basic',
-            iconUrl: '/icons/icon48.png', // Use relative path to extension icon
             title: 'LieBlocker Analysis Complete',
             message: `Video fact-checking finished. Found ${analysisState.currentClaims.length} lies.`
           }, (notificationId) => {
@@ -227,8 +226,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try {
           chrome.notifications.create({
             type: 'basic',
-            iconUrl: '/icons/icon48.png', // Use relative path to extension icon
-            title: 'Lies Detected!',
+            title: 'Critical Lies Detected!',
             message: `Found ${highSeverityLies} critical lies in video analysis. Check the extension for details.`
           }, (notificationId) => {
             if (chrome.runtime.lastError) {
