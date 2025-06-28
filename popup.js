@@ -1,4 +1,4 @@
-// Enhanced popup script with secure API key storage and better error handling
+// Enhanced popup script with robust content script injection and communication
 (function() {
   'use strict';
   
@@ -218,43 +218,10 @@
         throw new Error('Please navigate to a YouTube video first');
       }
       
-      // Check if content script is loaded by trying to inject it first
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: () => {
-            // Simple test to see if our content script is loaded
-            return typeof window.LieBlockerContentLoaded !== 'undefined';
-          }
-        });
-      } catch (error) {
-        console.log('🔄 Content script not detected, injecting...');
-        
-        // Inject the content script manually
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['src/services/securityService.js']
-          });
-          
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['supabase-client.js']
-          });
-          
-          await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            files: ['content.js']
-          });
-          
-          console.log('✅ Content script injected successfully');
-          
-          // Wait a moment for the script to initialize
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (injectError) {
-          console.error('❌ Failed to inject content script:', injectError);
-          throw new Error('Failed to load content script. Please refresh the page and try again.');
-        }
+      // Ensure content script is loaded and responsive
+      const contentScriptReady = await ensureContentScriptLoaded(tab.id);
+      if (!contentScriptReady) {
+        throw new Error('Failed to load content script. Please refresh the page and try again.');
       }
       
       // Send message to content script with enhanced timeout handling
@@ -293,6 +260,62 @@
     }
   }
   
+  async function ensureContentScriptLoaded(tabId) {
+    console.log('🔍 Checking if content script is loaded...');
+    
+    try {
+      // First, try to ping the existing content script
+      const pingResponse = await sendMessageWithTimeout(tabId, { type: 'ping' }, 2000);
+      if (pingResponse && pingResponse.success) {
+        console.log('✅ Content script already loaded and responsive');
+        return true;
+      }
+    } catch (error) {
+      console.log('📡 Content script not responding, will inject...');
+    }
+    
+    try {
+      console.log('💉 Injecting content script files...');
+      
+      // Inject security service first
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['src/services/securityService.js']
+      });
+      
+      // Then inject Supabase client
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['supabase-client.js']
+      });
+      
+      // Finally inject main content script
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['content.js']
+      });
+      
+      console.log('✅ Content script files injected');
+      
+      // Wait for initialization
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      // Test if content script is now responsive
+      const testResponse = await sendMessageWithTimeout(tabId, { type: 'ping' }, 3000);
+      if (testResponse && testResponse.success) {
+        console.log('✅ Content script injection successful and responsive');
+        return true;
+      } else {
+        console.error('❌ Content script not responsive after injection');
+        return false;
+      }
+      
+    } catch (error) {
+      console.error('❌ Failed to inject content script:', error);
+      return false;
+    }
+  }
+  
   async function sendMessageWithRetry(tabId, message, maxRetries = 3, timeout = 30000) {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
@@ -312,6 +335,12 @@
         
         if (attempt === maxRetries) {
           throw new Error(`Failed to communicate with content script after ${maxRetries} attempts. Please refresh the page and try again.`);
+        }
+        
+        // Try to re-inject content script before retrying
+        if (attempt < maxRetries) {
+          console.log('🔄 Re-injecting content script before retry...');
+          await ensureContentScriptLoaded(tabId);
         }
         
         // Wait before retrying (exponential backoff)

@@ -19,7 +19,8 @@
     {
       "matches": ["https://*.youtube.com/*"],
       "js": ["src/services/securityService.js", "supabase-client.js", "content.js"],
-      "run_at": "document_end"
+      "run_at": "document_end",
+      "all_frames": false
     }
   ],
   "background": {

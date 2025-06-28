@@ -1,4 +1,4 @@
-// Enhanced YouTube transcript extraction with auto-generated transcript priority
+// Enhanced YouTube transcript extraction with robust communication and ping handling
 // This content script runs on YouTube pages and handles video analysis
 
 (function() {
@@ -103,7 +103,11 @@
       console.log('📨 Content script received message:', message.type);
       
       try {
-        if (message.type === 'analyzeVideo') {
+        if (message.type === 'ping') {
+          // Respond to ping messages to confirm content script is loaded and responsive
+          sendResponse({ success: true, loaded: true, timestamp: Date.now() });
+          return true;
+        } else if (message.type === 'analyzeVideo') {
           handleAnalyzeVideo(sendResponse);
           return true; // Keep message channel open
         } else if (message.type === 'skipLiesToggle') {
