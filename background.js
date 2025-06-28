@@ -165,12 +165,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         analysisState.stage = 'error';
       }
       
-      // Create completion notification
+      // Create completion notification (without icon to avoid CSP issues)
       if (dataString.includes('Analysis complete') || dataString.includes('loaded from cache')) {
         try {
           chrome.notifications.create({
             type: 'basic',
-            iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9IiM0Mjg1RjQiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMiAxMikiPgo8cGF0aCBkPSJNMTIgMkMxMy4xIDIgMTQgMi45IDE0IDRIMT1WNkMxNS41IDYgMTYgNi41IDE2IDdWMTdDMTYgMTcuNSAxNS41IDE4IDE1IDE4SDlDOC41IDE4IDggMTcuNSA4IDE3VjdDOCA2LjUgOC41IDYgOSA2SDEwVjRDMTAgMi45IDEwLjkgMiAxMiAyWk0xMiA0QzExLjQgNCAxMSA0LjQgMTEgNVY2SDEzVjVDMTMgNC40IDEyLjYgNCAxMiA0WkMxNCAzQzE0IDMgMTQgMyAxNCAzVjJDMTYuMiAyIDE4IDMuOCAxOCA2VjE4QzE4IDIwLjIgMTYuMiAyMiAxNCAyMkgxMEMwIDIyIDggMjAuMiA4IDE4VjZDOCAzLjggOS44IDIgMTIgMloiIGZpbGw9IndoaXRlIi8+Cjwvc3ZnPgo8L3N2Zz4K',
+            iconUrl: '/icons/icon48.png', // Use relative path to extension icon
             title: 'LieBlocker Analysis Complete',
             message: `Video fact-checking finished. Found ${analysisState.currentClaims.length} lies.`
           }, (notificationId) => {
@@ -219,7 +219,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       analysisState.stage = 'complete';
     }
     
-    // Create notification for high-severity lies
+    // Create notification for high-severity lies (without icon to avoid CSP issues)
     if (!message.isComplete && message.claims && message.claims.length > 0) {
       const highSeverityLies = message.claims.filter(c => c.severity === 'critical').length;
       
@@ -227,9 +227,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         try {
           chrome.notifications.create({
             type: 'basic',
-            iconUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDgiIGhlaWdodD0iNDgiIHZpZXdCb3g9IjAgMCA0OCA0OCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHJlY3Qgd2lkdGg9IjQ4IiBoZWlnaHQ9IjQ4IiByeD0iMTIiIGZpbGw9IiNEQzM1NDUiLz4KPHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIiB0cmFuc2Zvcm09InRyYW5zbGF0ZSgxMiAxMikiPgo8cGF0aCBkPSJNMTIgMkMyIDIgMiAxMiAyIDEyUzIgMjIgMTIgMjJTMjIgMTIgMjIgMTJTMjIgMiAxMiAyWk0xMiA3QzEyLjUgNyAxMyA3LjUgMTMgOFYxMkMxMyAxMi41IDEyLjUgMTMgMTIgMTNTMTEgMTIuNSAxMSAxMlY4QzExIDcuNSAxMS41IDcgMTIgN1pNMTIgMTVDMTIuNSAxNSAxMyAxNS41IDEzIDE2UzEyLjUgMTcgMTIgMTdTMTEgMTYuNSAxMSAxNlMxMS41IDE1IDEyIDE1WiIgZmlsbD0id2hpdGUiLz4KPC9zdmc+Cjwvc3ZnPgo=',
+            iconUrl: '/icons/icon48.png', // Use relative path to extension icon
             title: 'Lies Detected!',
-            message: `Found ${highSeverityLies} lies in video analysis. Check the extension for details.`
+            message: `Found ${highSeverityLies} critical lies in video analysis. Check the extension for details.`
           }, (notificationId) => {
             if (chrome.runtime.lastError) {
               console.warn('Notification creation failed:', chrome.runtime.lastError.message);
