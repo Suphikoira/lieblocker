@@ -25,8 +25,13 @@
   function initialize() {
     console.log('🎬 Initializing LieBlocker on YouTube');
     
-    // Initialize security service
-    securityService = new SecurityService();
+    // Initialize security service if available
+    if (typeof SecurityService !== 'undefined') {
+      securityService = new SecurityService();
+      console.log('🔒 Security service initialized in content script');
+    } else {
+      console.warn('⚠️ SecurityService not available in content script');
+    }
     
     // Set up video change detection
     setupVideoChangeDetection();

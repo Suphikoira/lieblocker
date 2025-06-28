@@ -18,8 +18,14 @@
     console.log('🎬 Initializing popup');
     
     try {
-      // Initialize security service
-      securityService = new SecurityService();
+      // Initialize security service - check if it's available
+      if (typeof SecurityService !== 'undefined') {
+        securityService = new SecurityService();
+        await securityService.initialize();
+        console.log('🔒 Security service initialized');
+      } else {
+        console.warn('⚠️ SecurityService not available, using fallback storage');
+      }
       
       // Set up tab switching
       setupTabSwitching();
@@ -45,7 +51,7 @@
       console.log('✅ Popup initialized successfully');
     } catch (error) {
       console.error('❌ Error initializing popup:', error);
-      showNotification('Failed to initialize popup', 'error');
+      showNotification('Failed to initialize popup: ' + error.message, 'error');
     }
   }
   
@@ -179,17 +185,6 @@
       const indicator = document.createElement('div');
       indicator.className = 'security-indicator';
       indicator.innerHTML = '🔒 Encrypted Storage';
-      indicator.style.cssText = `
-        position: absolute;
-        right: 12px;
-        top: 50%;
-        transform: translateY(-50%);
-        font-size: 10px;
-        color: #34a853;
-        font-weight: 500;
-        pointer-events: none;
-        z-index: 10;
-      `;
       
       const container = apiKeyInput.parentNode;
       container.style.position = 'relative';
@@ -551,6 +546,10 @@
       } else if (!currentApiKey || currentApiKey.includes('*')) {
         // If empty or masked, just show success for other settings
         showNotification('Settings saved', 'success');
+      } else if (!securityService) {
+        // Fallback to regular storage if security service not available
+        await chrome.storage.local.set({ apiKey: currentApiKey });
+        showNotification('Settings saved (fallback storage)', 'warning');
       }
       
       // Show success message briefly
@@ -576,7 +575,7 @@
         errorMsg.style.display = 'block';
       }
       
-      showNotification('Failed to save settings', 'error');
+      showNotification('Failed to save settings securely', 'error');
     }
   }
   
@@ -907,7 +906,7 @@
       setTimeout(() => notification.remove(), 300);
     });
     
-    // Auto remove after  5 seconds
+    // Auto remove after 5 seconds
     setTimeout(() => {
       if (notification.parentNode) {
         notification.classList.add('removing');
