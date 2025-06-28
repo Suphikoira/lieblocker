@@ -3,6 +3,10 @@
   "name": "LieBlocker",
   "version": "1.0.0",
   "description": "AI-powered fact-checking for YouTube videos",
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": [
     "activeTab",
     "scripting",
@@ -28,7 +32,11 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "LieBlocker - AI Fact Checker 🛡️"
+    "default_title": "LieBlocker - AI Fact Checker 🛡️",
+    "default_icon": {
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com https://*.supabase.co;"
