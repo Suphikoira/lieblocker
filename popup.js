@@ -903,29 +903,64 @@
   
   async function clearCache() {
     try {
-      // Clear analysis cache
+      console.log('🧹 Starting cache clear operation...');
+      
+      // Get all storage data to identify what to clear
       const allData = await chrome.storage.local.get(null);
+      
+      // Identify cache-related keys to remove
       const keysToRemove = Object.keys(allData).filter(key => 
         key.startsWith('analysis_') || 
         key.startsWith('currentVideoLies_') ||
-        key === 'backgroundAnalysisState'
+        key === 'backgroundAnalysisState' ||
+        key === 'sessionStats' // Include session stats for reset
       );
       
+      console.log('🗑️ Keys to remove:', keysToRemove);
+      
+      // Remove identified cache keys
       if (keysToRemove.length > 0) {
         await chrome.storage.local.remove(keysToRemove);
+        console.log('✅ Cache keys removed from storage');
       }
       
+      // Reset session statistics to zero
+      const resetStats = {
+        videosAnalyzed: 0,
+        liesDetected: 0,
+        timeSaved: 0
+      };
+      
+      await chrome.storage.local.set({ sessionStats: resetStats });
+      console.log('📊 Session statistics reset to zero');
+      
       // Clear background state
-      chrome.runtime.sendMessage({ type: 'clearAnalysisState' });
+      try {
+        chrome.runtime.sendMessage({ type: 'clearAnalysisState' });
+        console.log('🔄 Background state cleared');
+      } catch (error) {
+        console.warn('⚠️ Could not clear background state:', error);
+      }
       
-      showNotification(`Cleared ${keysToRemove.length} cached items`, 'success');
+      // Reset current video lies in popup
+      currentVideoLies = [];
       
-      // Reload current video lies
-      await loadCurrentVideoLies();
+      // Update UI to reflect cleared state
+      updateLiesUI();
+      await loadSessionStats(); // This will show the reset stats
+      
+      // Show success notification
+      const totalCleared = keysToRemove.length;
+      showNotification(
+        `Cache cleared successfully! Removed ${totalCleared} items and reset session statistics.`, 
+        'success'
+      );
+      
+      console.log('✅ Cache clear operation completed successfully');
       
     } catch (error) {
       console.error('❌ Error clearing cache:', error);
-      showNotification('Failed to clear cache', 'error');
+      showNotification('Failed to clear cache: ' + error.message, 'error');
     }
   }
   
