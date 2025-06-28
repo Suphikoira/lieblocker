@@ -1,4 +1,4 @@
-// Enhanced popup script with secure API key storage
+// Enhanced popup script with secure API key storage and better error handling
 (function() {
   'use strict';
   
@@ -218,13 +218,52 @@
         throw new Error('Please navigate to a YouTube video first');
       }
       
-      // Send message to content script with timeout handling
-      const response = await sendMessageWithTimeout(tab.id, {
+      // Check if content script is loaded by trying to inject it first
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => {
+            // Simple test to see if our content script is loaded
+            return typeof window.LieBlockerContentLoaded !== 'undefined';
+          }
+        });
+      } catch (error) {
+        console.log('🔄 Content script not detected, injecting...');
+        
+        // Inject the content script manually
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['src/services/securityService.js']
+          });
+          
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['supabase-client.js']
+          });
+          
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            files: ['content.js']
+          });
+          
+          console.log('✅ Content script injected successfully');
+          
+          // Wait a moment for the script to initialize
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (injectError) {
+          console.error('❌ Failed to inject content script:', injectError);
+          throw new Error('Failed to load content script. Please refresh the page and try again.');
+        }
+      }
+      
+      // Send message to content script with enhanced timeout handling
+      const response = await sendMessageWithRetry(tab.id, {
         type: 'analyzeVideo'
-      }, 300000); // 5 minute timeout
+      }, 3, 300000); // 3 retries, 5 minute timeout
       
       if (!response) {
-        throw new Error('No response from content script');
+        throw new Error('No response from content script. Please refresh the page and try again.');
       }
       
       if (!response.success) {
@@ -254,10 +293,39 @@
     }
   }
   
+  async function sendMessageWithRetry(tabId, message, maxRetries = 3, timeout = 30000) {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`📨 Sending message to content script (attempt ${attempt}/${maxRetries})`);
+        
+        const response = await sendMessageWithTimeout(tabId, message, timeout);
+        
+        if (response) {
+          console.log('✅ Message sent successfully');
+          return response;
+        }
+        
+        throw new Error('No response received');
+        
+      } catch (error) {
+        console.warn(`⚠️ Message attempt ${attempt} failed:`, error.message);
+        
+        if (attempt === maxRetries) {
+          throw new Error(`Failed to communicate with content script after ${maxRetries} attempts. Please refresh the page and try again.`);
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+        console.log(`⏳ Waiting ${delay}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
   async function sendMessageWithTimeout(tabId, message, timeout = 30000) {
     return new Promise((resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        reject(new Error('Message timeout - content script may not be loaded'));
+        reject(new Error('Message timeout - content script may not be responding'));
       }, timeout);
       
       try {

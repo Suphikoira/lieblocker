@@ -6,6 +6,9 @@
   
   console.log('🚀 LieBlocker content script loaded');
   
+  // Set a flag to indicate the content script is loaded
+  window.LieBlockerContentLoaded = true;
+  
   // Global state
   let currentVideoId = null;
   let isAnalyzing = false;
@@ -27,8 +30,12 @@
     
     // Initialize security service if available
     if (typeof SecurityService !== 'undefined') {
-      securityService = new SecurityService();
-      console.log('🔒 Security service initialized in content script');
+      try {
+        securityService = new SecurityService();
+        console.log('🔒 Security service initialized in content script');
+      } catch (error) {
+        console.warn('⚠️ Failed to initialize SecurityService:', error);
+      }
     } else {
       console.warn('⚠️ SecurityService not available in content script');
     }
@@ -44,6 +51,8 @@
     
     // Initial video detection
     detectVideoChange();
+    
+    console.log('✅ LieBlocker content script initialized');
   }
   
   function setupVideoChangeDetection() {
@@ -93,16 +102,23 @@
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.log('📨 Content script received message:', message.type);
       
-      if (message.type === 'analyzeVideo') {
-        handleAnalyzeVideo(sendResponse);
-        return true; // Keep message channel open
-      } else if (message.type === 'skipLiesToggle') {
-        skipLiesEnabled = message.enabled;
-        console.log('⏭️ Skip lies toggled:', skipLiesEnabled);
-        sendResponse({ success: true });
-      } else if (message.type === 'jumpToTimestamp') {
-        jumpToTimestamp(message.timestamp);
-        sendResponse({ success: true });
+      try {
+        if (message.type === 'analyzeVideo') {
+          handleAnalyzeVideo(sendResponse);
+          return true; // Keep message channel open
+        } else if (message.type === 'skipLiesToggle') {
+          skipLiesEnabled = message.enabled;
+          console.log('⏭️ Skip lies toggled:', skipLiesEnabled);
+          sendResponse({ success: true });
+        } else if (message.type === 'jumpToTimestamp') {
+          jumpToTimestamp(message.timestamp);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ success: true, message: 'Message received' });
+        }
+      } catch (error) {
+        console.error('❌ Error handling message:', error);
+        sendResponse({ success: false, error: error.message });
       }
     });
   }

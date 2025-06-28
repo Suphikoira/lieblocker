@@ -18,7 +18,8 @@
   "content_scripts": [
     {
       "matches": ["https://*.youtube.com/*"],
-      "js": ["supabase-client.js", "content.js"]
+      "js": ["src/services/securityService.js", "supabase-client.js", "content.js"],
+      "run_at": "document_end"
     }
   ],
   "background": {
