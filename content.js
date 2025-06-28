@@ -150,6 +150,25 @@
         return;
       }
       
+      // CRITICAL: Check API key before proceeding with analysis
+      chrome.runtime.sendMessage({
+        type: 'analysisProgress',
+        stage: 'validation',
+        message: 'Validating API configuration...'
+      });
+      
+      const settings = await getSettings();
+      if (!settings.apiKey || settings.apiKey.trim() === '') {
+        throw new Error('AI API key not configured. Please add your API key in the extension settings.');
+      }
+      
+      // Validate API key format
+      if (!validateApiKeyFormat(settings.aiProvider, settings.apiKey)) {
+        throw new Error(`Invalid ${settings.aiProvider} API key format. Please check your API key in settings.`);
+      }
+      
+      console.log('✅ API key validation passed');
+      
       // Extract transcript with auto-generated priority
       chrome.runtime.sendMessage({
         type: 'analysisProgress',
@@ -208,6 +227,19 @@
       
       isAnalyzing = false;
       sendResponse({ success: false, error: error.message });
+    }
+  }
+  
+  function validateApiKeyFormat(provider, apiKey) {
+    if (!apiKey || typeof apiKey !== 'string') return false;
+    
+    switch (provider) {
+      case 'openai':
+        return apiKey.startsWith('sk-') && apiKey.length > 20;
+      case 'gemini':
+        return apiKey.length > 20; // Basic length check for Gemini
+      default:
+        return false;
     }
   }
   
