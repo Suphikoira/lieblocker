@@ -13,6 +13,7 @@
   let currentLies = [];
   let videoPlayer = null;
   let skipNotificationTimeout = null;
+  let securityService = null;
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
@@ -23,6 +24,9 @@
   
   function initialize() {
     console.log('🎬 Initializing LieBlocker on YouTube');
+    
+    // Initialize security service
+    securityService = new SecurityService();
     
     // Set up video change detection
     setupVideoChangeDetection();
@@ -126,6 +130,25 @@
         message: 'Starting video analysis...'
       });
       
+      // CRITICAL: Check API key before proceeding with analysis
+      chrome.runtime.sendMessage({
+        type: 'analysisProgress',
+        stage: 'validation',
+        message: 'Validating API configuration...'
+      });
+      
+      const settings = await getSettings();
+      if (!settings.apiKey || settings.apiKey.trim() === '') {
+        throw new Error('AI API key not configured. Please add your API key in the extension settings.');
+      }
+      
+      // Validate API key format
+      if (!validateApiKeyFormat(settings.aiProvider, settings.apiKey)) {
+        throw new Error(`Invalid ${settings.aiProvider} API key format. Please check your API key in settings.`);
+      }
+      
+      console.log('✅ API key validation passed');
+      
       // Check if we have cached results first
       const cachedResults = await checkCachedResults(videoId);
       if (cachedResults) {
@@ -149,25 +172,6 @@
         sendResponse({ success: true, cached: true });
         return;
       }
-      
-      // CRITICAL: Check API key before proceeding with analysis
-      chrome.runtime.sendMessage({
-        type: 'analysisProgress',
-        stage: 'validation',
-        message: 'Validating API configuration...'
-      });
-      
-      const settings = await getSettings();
-      if (!settings.apiKey || settings.apiKey.trim() === '') {
-        throw new Error('AI API key not configured. Please add your API key in the extension settings.');
-      }
-      
-      // Validate API key format
-      if (!validateApiKeyFormat(settings.aiProvider, settings.apiKey)) {
-        throw new Error(`Invalid ${settings.aiProvider} API key format. Please check your API key in settings.`);
-      }
-      
-      console.log('✅ API key validation passed');
       
       // Extract transcript with auto-generated priority
       chrome.runtime.sendMessage({
@@ -606,7 +610,7 @@
   }
   
   async function analyzeTranscriptWithAI(transcript, videoData) {
-    // Get settings from storage
+    // Get settings from secure storage
     const settings = await getSettings();
     
     if (!settings.apiKey) {
@@ -798,21 +802,35 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
   }
   
   async function getSettings() {
-    return new Promise((resolve) => {
+    // First try to get from secure storage
+    let secureSettings = {};
+    if (securityService) {
+      try {
+        secureSettings = await securityService.getSecureSettings() || {};
+      } catch (error) {
+        console.warn('⚠️ Could not load secure settings:', error);
+      }
+    }
+    
+    // Get regular settings from Chrome storage
+    const result = await new Promise((resolve) => {
       chrome.storage.local.get([
         'aiProvider',
         'aiModel',
-        'apiKey',
+        'apiKey', // Fallback for existing users
         'analysisDuration'
-      ], (result) => {
-        resolve({
-          aiProvider: result.aiProvider || 'openai',
-          aiModel: result.aiModel || 'gpt-4o-mini',
-          apiKey: result.apiKey || '',
-          analysisDuration: result.analysisDuration || 20
-        });
-      });
+      ], resolve);
     });
+    
+    // Merge with priority to secure storage
+    const settings = {
+      aiProvider: result.aiProvider || 'openai',
+      aiModel: result.aiModel || 'gpt-4o-mini',
+      apiKey: secureSettings.apiKey || result.apiKey || '',
+      analysisDuration: result.analysisDuration || 20
+    };
+    
+    return settings;
   }
   
   async function checkCachedResults(videoId) {

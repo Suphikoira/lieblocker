@@ -1,4 +1,4 @@
-// Enhanced popup script with better error handling and communication
+// Enhanced popup script with secure API key storage
 (function() {
   'use strict';
   
@@ -9,6 +9,7 @@
   let currentVideoLies = [];
   let analysisInProgress = false;
   let backgroundState = null;
+  let securityService = null;
   
   // Initialize popup
   document.addEventListener('DOMContentLoaded', initialize);
@@ -17,13 +18,16 @@
     console.log('🎬 Initializing popup');
     
     try {
+      // Initialize security service
+      securityService = new SecurityService();
+      
       // Set up tab switching
       setupTabSwitching();
       
       // Set up event listeners
       setupEventListeners();
       
-      // Load settings
+      // Load settings (now with secure storage)
       await loadSettings();
       
       // Load current state from background
@@ -109,19 +113,31 @@
       aiProviderSelect.addEventListener('change', handleAIProviderChange);
     }
     
-    // API Key input with immediate save on blur and debounced save on input
+    // API Key input with secure storage
     const apiKeyInput = document.getElementById('api-key');
     if (apiKeyInput) {
-      apiKeyInput.addEventListener('input', debounce(saveSettings, 1000));
-      apiKeyInput.addEventListener('blur', saveSettings);
-      apiKeyInput.addEventListener('change', saveSettings);
+      // Save immediately on input with debouncing
+      apiKeyInput.addEventListener('input', debounce(saveSettingsSecurely, 1000));
+      // Save on blur for immediate persistence
+      apiKeyInput.addEventListener('blur', saveSettingsSecurely);
+      // Save on change for compatibility
+      apiKeyInput.addEventListener('change', saveSettingsSecurely);
+      
+      // Visual feedback for secure storage
+      apiKeyInput.addEventListener('focus', () => {
+        showSecurityIndicator(true);
+      });
+      
+      apiKeyInput.addEventListener('blur', () => {
+        setTimeout(() => showSecurityIndicator(false), 2000);
+      });
     }
     
     // Analysis duration
     const durationSlider = document.getElementById('analysis-duration');
     if (durationSlider) {
       durationSlider.addEventListener('input', updateDurationDisplay);
-      durationSlider.addEventListener('change', saveSettings);
+      durationSlider.addEventListener('change', saveSettingsSecurely);
     }
     
     // Model selects
@@ -129,11 +145,11 @@
     const geminiModelSelect = document.getElementById('gemini-model');
     
     if (openaiModelSelect) {
-      openaiModelSelect.addEventListener('change', saveSettings);
+      openaiModelSelect.addEventListener('change', saveSettingsSecurely);
     }
     
     if (geminiModelSelect) {
-      geminiModelSelect.addEventListener('change', saveSettings);
+      geminiModelSelect.addEventListener('change', saveSettingsSecurely);
     }
     
     // Clear cache button
@@ -146,6 +162,38 @@
     const exportBtn = document.getElementById('export-settings');
     if (exportBtn) {
       exportBtn.addEventListener('click', exportSettings);
+    }
+  }
+  
+  function showSecurityIndicator(show) {
+    const apiKeyInput = document.getElementById('api-key');
+    if (!apiKeyInput) return;
+    
+    // Remove existing indicator
+    const existingIndicator = document.querySelector('.security-indicator');
+    if (existingIndicator) {
+      existingIndicator.remove();
+    }
+    
+    if (show) {
+      const indicator = document.createElement('div');
+      indicator.className = 'security-indicator';
+      indicator.innerHTML = '🔒 Encrypted Storage';
+      indicator.style.cssText = `
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: 10px;
+        color: #34a853;
+        font-weight: 500;
+        pointer-events: none;
+        z-index: 10;
+      `;
+      
+      const container = apiKeyInput.parentNode;
+      container.style.position = 'relative';
+      container.appendChild(indicator);
     }
   }
   
@@ -276,8 +324,8 @@
         toggle.classList.remove('active');
       }
       
-      // Save setting
-      await chrome.storage.local.set({ skipLiesEnabled: newState });
+      // Save setting securely
+      await saveSettingsSecurely();
       
       // Notify content script
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -313,22 +361,55 @@
   
   async function loadSettings() {
     try {
-      // Load all settings from storage
+      console.log('📋 Loading settings...');
+      
+      // Load secure settings first (contains API key)
+      let secureSettings = {};
+      if (securityService) {
+        try {
+          secureSettings = await securityService.getSecureSettings() || {};
+          console.log('🔒 Secure settings loaded:', secureSettings.apiKey ? 'API key present' : 'No API key');
+        } catch (error) {
+          console.warn('⚠️ Could not load secure settings, falling back to regular storage:', error);
+        }
+      }
+      
+      // Load regular settings from Chrome storage
       const result = await chrome.storage.local.get([
         'aiProvider',
         'openaiModel',
         'geminiModel',
-        'apiKey',
+        'apiKey', // Fallback for existing users
         'analysisDuration',
         'skipLiesEnabled'
       ]);
       
-      console.log('📋 Loading settings:', { ...result, apiKey: result.apiKey ? '[HIDDEN]' : 'NOT SET' });
+      console.log('📋 Regular settings loaded');
+      
+      // Merge settings with priority to secure storage
+      const settings = {
+        ...result,
+        ...secureSettings
+      };
+      
+      // If we have an API key in regular storage but not in secure storage, migrate it
+      if (result.apiKey && !secureSettings.apiKey && securityService) {
+        console.log('🔄 Migrating API key to secure storage...');
+        try {
+          await securityService.storeSecureSettings({ apiKey: result.apiKey });
+          // Remove from regular storage
+          await chrome.storage.local.remove(['apiKey']);
+          settings.apiKey = result.apiKey;
+          showNotification('API key migrated to secure storage', 'success');
+        } catch (error) {
+          console.error('❌ Failed to migrate API key:', error);
+        }
+      }
       
       // AI Provider
       const aiProviderSelect = document.getElementById('ai-provider');
       if (aiProviderSelect) {
-        aiProviderSelect.value = result.aiProvider || 'openai';
+        aiProviderSelect.value = settings.aiProvider || 'openai';
         handleAIProviderChange(); // Update model visibility
       }
       
@@ -337,31 +418,55 @@
       const geminiModelSelect = document.getElementById('gemini-model');
       
       if (openaiModelSelect) {
-        openaiModelSelect.value = result.openaiModel || 'gpt-4o-mini';
+        openaiModelSelect.value = settings.openaiModel || 'gpt-4o-mini';
       }
       
       if (geminiModelSelect) {
-        geminiModelSelect.value = result.geminiModel || 'gemini-2.0-flash-exp';
+        geminiModelSelect.value = settings.geminiModel || 'gemini-2.0-flash-exp';
       }
       
-      // API Key - this is the critical part for persistence
+      // API Key - show masked version for security
       const apiKeyInput = document.getElementById('api-key');
       if (apiKeyInput) {
-        apiKeyInput.value = result.apiKey || '';
-        console.log('🔑 API key loaded:', result.apiKey ? 'YES' : 'NO');
+        if (settings.apiKey) {
+          // Show masked version: first 8 chars + asterisks + last 4 chars
+          const maskedKey = settings.apiKey.length > 12 
+            ? settings.apiKey.substring(0, 8) + '*'.repeat(Math.min(settings.apiKey.length - 12, 20)) + settings.apiKey.substring(settings.apiKey.length - 4)
+            : '*'.repeat(settings.apiKey.length);
+          
+          apiKeyInput.value = maskedKey;
+          apiKeyInput.dataset.hasKey = 'true';
+          apiKeyInput.placeholder = 'API key stored securely (click to change)';
+          
+          // Clear on focus to allow editing
+          apiKeyInput.addEventListener('focus', function clearMasked() {
+            if (this.dataset.hasKey === 'true') {
+              this.value = '';
+              this.placeholder = 'Enter new API key or leave blank to keep current';
+              this.dataset.hasKey = 'false';
+            }
+            this.removeEventListener('focus', clearMasked);
+          });
+          
+          console.log('🔑 API key loaded and masked');
+        } else {
+          apiKeyInput.value = '';
+          apiKeyInput.placeholder = 'Enter your AI API key...';
+          apiKeyInput.dataset.hasKey = 'false';
+        }
       }
       
       // Analysis Duration
       const durationSlider = document.getElementById('analysis-duration');
       if (durationSlider) {
-        durationSlider.value = result.analysisDuration || 20;
+        durationSlider.value = settings.analysisDuration || 20;
         updateDurationDisplay();
       }
       
       // Skip Lies Toggle
       const skipToggle = document.getElementById('skip-lies-toggle');
       if (skipToggle) {
-        if (result.skipLiesEnabled) {
+        if (settings.skipLiesEnabled) {
           skipToggle.classList.add('active');
         } else {
           skipToggle.classList.remove('active');
@@ -390,7 +495,7 @@
     }
     
     // Save the setting
-    saveSettings();
+    saveSettingsSecurely();
   }
   
   function updateDurationDisplay() {
@@ -403,23 +508,50 @@
     }
   }
   
-  async function saveSettings() {
+  async function saveSettingsSecurely() {
     try {
+      console.log('💾 Saving settings securely...');
+      
       // Get all current values from the form
-      const settings = {
+      const apiKeyInput = document.getElementById('api-key');
+      const currentApiKey = apiKeyInput?.value || '';
+      
+      // Prepare regular settings (non-sensitive)
+      const regularSettings = {
         aiProvider: document.getElementById('ai-provider')?.value || 'openai',
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
-        apiKey: document.getElementById('api-key')?.value || '',
-        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 20
+        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 20,
+        skipLiesEnabled: document.getElementById('skip-lies-toggle')?.classList.contains('active') || false
       };
       
-      console.log('💾 Saving settings:', { ...settings, apiKey: settings.apiKey ? '[HIDDEN]' : 'EMPTY' });
+      // Save regular settings to Chrome storage
+      await chrome.storage.local.set(regularSettings);
+      console.log('✅ Regular settings saved');
       
-      // Save to Chrome storage
-      await chrome.storage.local.set(settings);
-      
-      console.log('✅ Settings saved successfully');
+      // Handle API key securely
+      if (securityService && currentApiKey && currentApiKey.trim() !== '') {
+        // Only save if it's not the masked version and not empty
+        if (!currentApiKey.includes('*') && currentApiKey.length > 10) {
+          console.log('🔒 Saving API key to secure storage...');
+          await securityService.storeSecureSettings({ apiKey: currentApiKey.trim() });
+          console.log('✅ API key saved securely');
+          
+          // Update UI to show masked version
+          const maskedKey = currentApiKey.length > 12 
+            ? currentApiKey.substring(0, 8) + '*'.repeat(Math.min(currentApiKey.length - 12, 20)) + currentApiKey.substring(currentApiKey.length - 4)
+            : '*'.repeat(currentApiKey.length);
+          
+          apiKeyInput.value = maskedKey;
+          apiKeyInput.dataset.hasKey = 'true';
+          apiKeyInput.placeholder = 'API key stored securely (click to change)';
+          
+          showNotification('Settings saved securely', 'success');
+        }
+      } else if (!currentApiKey || currentApiKey.includes('*')) {
+        // If empty or masked, just show success for other settings
+        showNotification('Settings saved', 'success');
+      }
       
       // Show success message briefly
       const successMsg = document.getElementById('api-key-success');
@@ -427,29 +559,30 @@
       
       if (successMsg && errorMsg) {
         errorMsg.style.display = 'none';
-        successMsg.textContent = 'Settings saved';
+        successMsg.textContent = 'Settings saved securely';
         successMsg.style.display = 'block';
         
         setTimeout(() => {
           successMsg.style.display = 'none';
-        }, 2000);
+        }, 3000);
       }
       
-      // Verify the save worked by reading it back
-      const verification = await chrome.storage.local.get(['apiKey']);
-      console.log('🔍 Verification - API key saved:', verification.apiKey ? 'YES' : 'NO');
-      
     } catch (error) {
-      console.error('❌ Error saving settings:', error);
+      console.error('❌ Error saving settings securely:', error);
       
       const errorMsg = document.getElementById('api-key-error');
       if (errorMsg) {
-        errorMsg.textContent = 'Failed to save settings';
+        errorMsg.textContent = 'Failed to save settings securely';
         errorMsg.style.display = 'block';
       }
       
       showNotification('Failed to save settings', 'error');
     }
+  }
+  
+  // Keep the old saveSettings function for backward compatibility
+  async function saveSettings() {
+    return await saveSettingsSecurely();
   }
   
   async function loadBackgroundState() {
@@ -710,8 +843,7 @@
         'skipLiesEnabled'
       ]);
       
-      // Remove sensitive data
-      delete settings.apiKey;
+      // Note: API key is intentionally excluded for security
       
       const dataStr = JSON.stringify(settings, null, 2);
       const dataBlob = new Blob([dataStr], { type: 'application/json' });
@@ -724,7 +856,7 @@
       
       URL.revokeObjectURL(url);
       
-      showNotification('Settings exported successfully', 'success');
+      showNotification('Settings exported (API key excluded for security)', 'success');
       
     } catch (error) {
       console.error('❌ Error exporting settings:', error);
@@ -775,7 +907,7 @@
       setTimeout(() => notification.remove(), 300);
     });
     
-    // Auto remove after 5 seconds
+    // Auto remove after  5 seconds
     setTimeout(() => {
       if (notification.parentNode) {
         notification.classList.add('removing');
