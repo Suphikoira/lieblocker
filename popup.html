@@ -2,6 +2,8 @@
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self'; object-src 'self';">
   <style>
     body {
       width: 360px;
@@ -347,6 +349,13 @@
     
     .btn-primary:active {
       background: #1557b0;
+    }
+    
+    .btn-primary:disabled {
+      background: #dadce0;
+      color: #5f6368;
+      cursor: not-allowed;
+      box-shadow: none;
     }
     
     .btn-secondary {
@@ -789,6 +798,19 @@
       line-height: 1.4;
     }
 
+    /* Security indicator styles */
+    .security-indicator {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 10px;
+      color: #34a853;
+      font-weight: 500;
+      pointer-events: none;
+      z-index: 10;
+    }
+
     /* Responsive design for timestamp badges */
     @media (max-width: 380px) {
       .lie-timestamp-badge {
@@ -834,19 +856,6 @@
 
     .clickable-lie-item:active .lie-timestamp-badge {
       transform: scale(1.05);
-    }
-
-    /* Security indicator styles */
-    .security-indicator {
-      position: absolute;
-      right: 12px;
-      top: 50%;
-      transform: translateY(-50%);
-      font-size: 10px;
-      color: #34a853;
-      font-weight: 500;
-      pointer-events: none;
-      z-index: 10;
     }
   </style>
 </head>
@@ -1014,7 +1023,12 @@
     </div>
   </div>
   
-  <!-- Load security service first, then popup script -->
+  <!-- Load utilities and security service first, then popup script -->
+  <script src="src/utils/errorHandler.js"></script>
+  <script src="src/utils/validator.js"></script>
+  <script src="src/utils/rateLimiter.js"></script>
+  <script src="src/utils/performanceMonitor.js"></script>
+  <script src="src/utils/userFeedback.js"></script>
   <script src="src/services/securityService.js"></script>
   <script src="popup.js"></script>
 </body>

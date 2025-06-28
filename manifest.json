@@ -29,5 +29,14 @@
   "action": {
     "default_popup": "popup.html",
     "default_title": "LieBlocker - AI Fact Checker 🛡️"
-  }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.openai.com https://generativelanguage.googleapis.com https://*.supabase.co;"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["src/services/*.js"],
+      "matches": ["https://*.youtube.com/*"]
+    }
+  ]
 }
