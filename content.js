@@ -17,6 +17,8 @@
   let videoPlayer = null;
   let skipNotificationTimeout = null;
   let securityService = null;
+  let autoSkipInterval = null;
+  let lastSkippedLie = null;
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
@@ -84,12 +86,24 @@
       console.log('📹 New video detected:', videoId);
       currentVideoId = videoId;
       currentLies = [];
+      lastSkippedLie = null;
+      
+      // Clear any existing auto-skip interval
+      if (autoSkipInterval) {
+        clearInterval(autoSkipInterval);
+        autoSkipInterval = null;
+      }
       
       // Get video player reference
       videoPlayer = document.querySelector('video');
       
       // Load lies for this video from background storage
       loadCurrentVideoLies(videoId);
+      
+      // Set up auto-skip if enabled
+      if (skipLiesEnabled) {
+        setupAutoSkip();
+      }
     }
   }
   
@@ -111,11 +125,13 @@
           handleAnalyzeVideo(sendResponse);
           return true; // Keep message channel open
         } else if (message.type === 'skipLiesToggle') {
-          skipLiesEnabled = message.enabled;
-          console.log('⏭️ Skip lies toggled:', skipLiesEnabled);
+          handleSkipLiesToggle(message.enabled);
           sendResponse({ success: true });
         } else if (message.type === 'jumpToTimestamp') {
           jumpToTimestamp(message.timestamp);
+          sendResponse({ success: true });
+        } else if (message.type === 'liesUpdate') {
+          handleLiesUpdate(message);
           sendResponse({ success: true });
         } else {
           sendResponse({ success: true, message: 'Message received' });
@@ -125,6 +141,34 @@
         sendResponse({ success: false, error: error.message });
       }
     });
+  }
+  
+  function handleSkipLiesToggle(enabled) {
+    skipLiesEnabled = enabled;
+    console.log('⏭️ Skip lies toggled:', skipLiesEnabled);
+    
+    // Save setting
+    chrome.storage.local.set({ skipLiesEnabled: enabled });
+    
+    if (enabled && currentLies.length > 0) {
+      setupAutoSkip();
+    } else if (!enabled && autoSkipInterval) {
+      clearInterval(autoSkipInterval);
+      autoSkipInterval = null;
+      console.log('⏹️ Auto-skip disabled');
+    }
+  }
+  
+  function handleLiesUpdate(message) {
+    if (message.videoId === currentVideoId && message.claims) {
+      currentLies = message.claims;
+      console.log('📋 Updated current video lies:', currentLies.length);
+      
+      // Set up auto-skip if enabled
+      if (skipLiesEnabled && currentLies.length > 0) {
+        setupAutoSkip();
+      }
+    }
   }
   
   async function handleAnalyzeVideo(sendResponse) {
@@ -950,6 +994,11 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       if (response && response.success && response.lies) {
         currentLies = response.lies;
         console.log('📋 Loaded current video lies:', currentLies.length);
+        
+        // Set up auto-skip if enabled
+        if (skipLiesEnabled && currentLies.length > 0) {
+          setupAutoSkip();
+        }
         return;
       }
       
@@ -958,6 +1007,11 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       if (cachedResults && cachedResults.lies) {
         currentLies = cachedResults.lies;
         console.log('📋 Loaded lies from cache:', currentLies.length);
+        
+        // Set up auto-skip if enabled
+        if (skipLiesEnabled && currentLies.length > 0) {
+          setupAutoSkip();
+        }
       }
       
     } catch (error) {
@@ -985,24 +1039,55 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
     }
   }
   
-  // Auto-skip functionality
+  // Enhanced auto-skip functionality
   function setupAutoSkip() {
     if (!videoPlayer || !skipLiesEnabled || currentLies.length === 0) {
+      console.log('⏭️ Auto-skip setup skipped:', {
+        hasPlayer: !!videoPlayer,
+        enabled: skipLiesEnabled,
+        liesCount: currentLies.length
+      });
       return;
     }
     
-    const checkSkip = () => {
-      if (!skipLiesEnabled) return;
+    // Clear any existing interval
+    if (autoSkipInterval) {
+      clearInterval(autoSkipInterval);
+    }
+    
+    console.log('⏭️ Setting up auto-skip for', currentLies.length, 'lies');
+    
+    // Check for lies to skip every 500ms
+    autoSkipInterval = setInterval(() => {
+      if (!skipLiesEnabled || !videoPlayer || videoPlayer.paused) {
+        return;
+      }
       
       const currentTime = videoPlayer.currentTime;
       
+      // Find any lie that should be skipped at current time
       for (const lie of currentLies) {
         const startTime = lie.timestamp_seconds;
         const endTime = startTime + (lie.duration_seconds || 10);
         
+        // Check if we're within the lie timeframe
         if (currentTime >= startTime && currentTime < endTime) {
+          // Avoid skipping the same lie multiple times
+          if (lastSkippedLie && 
+              lastSkippedLie.timestamp_seconds === startTime && 
+              Date.now() - lastSkippedLie.skipTime < 5000) {
+            continue;
+          }
+          
           // Skip this lie
+          console.log('⏭️ Skipping lie at', formatTimestamp(startTime), '-', formatTimestamp(endTime));
           videoPlayer.currentTime = endTime;
+          
+          // Track the skip
+          lastSkippedLie = {
+            ...lie,
+            skipTime: Date.now()
+          };
           
           // Show skip notification
           showSkipNotification(lie);
@@ -1016,25 +1101,18 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
             claim: lie.claim_text
           });
           
-          break;
+          break; // Only skip one lie at a time
         }
-      }
-    };
-    
-    // Check every 500ms when video is playing
-    const skipInterval = setInterval(() => {
-      if (videoPlayer && !videoPlayer.paused) {
-        checkSkip();
       }
     }, 500);
     
-    // Clean up interval when video changes
-    const cleanup = () => {
-      clearInterval(skipInterval);
-    };
-    
-    // Store cleanup function for later use
-    window.cleanupAutoSkip = cleanup;
+    console.log('✅ Auto-skip enabled with interval ID:', autoSkipInterval);
+  }
+  
+  function formatTimestamp(seconds) {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   }
   
   function showSkipNotification(lie) {
@@ -1043,32 +1121,52 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       clearTimeout(skipNotificationTimeout);
     }
     
+    // Remove any existing notification
+    const existingNotification = document.querySelector('.lieblocker-skip-notification');
+    if (existingNotification) {
+      existingNotification.remove();
+    }
+    
     // Create notification element
     const notification = document.createElement('div');
+    notification.className = 'lieblocker-skip-notification';
     notification.style.cssText = `
       position: fixed;
       top: 20px;
       right: 20px;
-      background: #4285f4;
+      background: linear-gradient(135deg, #4285f4 0%, #1a73e8 100%);
       color: white;
-      padding: 12px 16px;
-      border-radius: 8px;
+      padding: 16px 20px;
+      border-radius: 12px;
       font-size: 14px;
       font-weight: 500;
       z-index: 10000;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      max-width: 300px;
-      animation: slideIn 0.3s ease;
+      box-shadow: 0 4px 16px rgba(66, 133, 244, 0.3);
+      max-width: 320px;
+      animation: slideInBounce 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     `;
     
+    const claimText = lie.claim_text || 'Unknown claim';
+    const truncatedClaim = claimText.length > 80 ? claimText.substring(0, 80) + '...' : claimText;
+    
     notification.innerHTML = `
-      <div style="margin-bottom: 4px;">🚨 Lie Skipped</div>
-      <div style="font-size: 12px; opacity: 0.9;">${lie.claim_text.substring(0, 100)}${lie.claim_text.length > 100 ? '...' : ''}</div>
+      <div style="display: flex; align-items: flex-start; gap: 12px;">
+        <div style="font-size: 20px; flex-shrink: 0;">⏭️</div>
+        <div style="flex: 1;">
+          <div style="font-weight: 600; margin-bottom: 4px;">Lie Skipped</div>
+          <div style="font-size: 12px; opacity: 0.9; line-height: 1.4;">${truncatedClaim}</div>
+          <div style="font-size: 11px; opacity: 0.7; margin-top: 4px;">
+            Confidence: ${Math.round((lie.confidence || 0) * 100)}% • 
+            Severity: ${lie.severity || 'medium'}
+          </div>
+        </div>
+      </div>
     `;
     
     document.body.appendChild(notification);
     
-    // Remove notification after 3 seconds
+    // Remove notification after 4 seconds
     skipNotificationTimeout = setTimeout(() => {
       if (notification.parentNode) {
         notification.style.animation = 'slideOut 0.3s ease';
@@ -1078,14 +1176,17 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
           }
         }, 300);
       }
-    }, 3000);
+    }, 4000);
   }
   
-  // Set up auto-skip when lies are loaded
+  // Listen for background messages to update lies
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'liesUpdate' && message.videoId === currentVideoId) {
       currentLies = message.claims || [];
-      if (skipLiesEnabled) {
+      console.log('📋 Updated lies from background:', currentLies.length);
+      
+      // Set up auto-skip if enabled
+      if (skipLiesEnabled && currentLies.length > 0) {
         setupAutoSkip();
       }
     }
@@ -1094,15 +1195,26 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
   // Add CSS for animations
   const style = document.createElement('style');
   style.textContent = `
-    @keyframes slideIn {
-      from { transform: translateX(100%); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
+    @keyframes slideInBounce {
+      0% { transform: translateX(100%) scale(0.8); opacity: 0; }
+      60% { transform: translateX(-10px) scale(1.05); opacity: 1; }
+      100% { transform: translateX(0) scale(1); opacity: 1; }
     }
     @keyframes slideOut {
-      from { transform: translateX(0); opacity: 1; }
-      to { transform: translateX(100%); opacity: 0; }
+      0% { transform: translateX(0) scale(1); opacity: 1; }
+      100% { transform: translateX(100%) scale(0.8); opacity: 0; }
     }
   `;
   document.head.appendChild(style);
+  
+  // Clean up on page unload
+  window.addEventListener('beforeunload', () => {
+    if (autoSkipInterval) {
+      clearInterval(autoSkipInterval);
+    }
+    if (skipNotificationTimeout) {
+      clearTimeout(skipNotificationTimeout);
+    }
+  });
   
 })();
