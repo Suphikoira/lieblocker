@@ -701,8 +701,8 @@
       }
     ];
     
-    // Make API call
-    const response = await makeAIAPICall(settings.aiProvider, settings.aiModel, messages, settings.apiKey);
+    // Make API call with retry logic for incomplete responses
+    const response = await makeAIAPICallWithRetry(settings.aiProvider, settings.aiModel, messages, settings.apiKey);
     
     // Parse response
     const analysisResult = parseAIResponse(response);
@@ -759,7 +759,10 @@ Example response:
   ]
 }
 
-IMPORTANT: Only return the JSON object. Do not include any other text.`;
+IMPORTANT: 
+1. Only return the JSON object. Do not include any other text.
+2. Ensure the JSON is complete and properly formatted.
+3. If you cannot complete the full response, return {"claims": []} instead of incomplete JSON.`;
   }
   
   function limitTranscriptByDuration(transcript, durationMinutes) {
@@ -776,6 +779,101 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
     return words.slice(0, targetWords).join(' ') + '...';
   }
   
+  async function makeAIAPICallWithRetry(provider, model, messages, apiKey, maxRetries = 3) {
+    let lastError = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        console.log(`🔄 AI API call attempt ${attempt}/${maxRetries}`);
+        
+        const response = await makeAIAPICall(provider, model, messages, apiKey);
+        
+        // Check if response is complete
+        if (isResponseComplete(response)) {
+          console.log('✅ Complete AI response received');
+          return response;
+        } else {
+          console.warn(`⚠️ Incomplete response on attempt ${attempt}, retrying...`);
+          lastError = new Error('Incomplete AI response received');
+          
+          // Wait before retrying (exponential backoff)
+          if (attempt < maxRetries) {
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+            await new Promise(resolve => setTimeout(resolve, delay));
+          }
+        }
+      } catch (error) {
+        console.error(`❌ AI API call attempt ${attempt} failed:`, error);
+        lastError = error;
+        
+        // Wait before retrying (exponential backoff)
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    
+    // If all retries failed, throw the last error
+    throw lastError || new Error('All AI API call attempts failed');
+  }
+  
+  function isResponseComplete(response) {
+    try {
+      let content = '';
+      
+      // Extract content based on provider format
+      if (response.choices && response.choices[0]) {
+        content = response.choices[0].message.content;
+      } else if (response.candidates && response.candidates[0]) {
+        content = response.candidates[0].content.parts[0].text;
+      } else {
+        return false;
+      }
+      
+      if (!content || typeof content !== 'string') {
+        return false;
+      }
+      
+      // Check for incomplete JSON patterns
+      const trimmedContent = content.trim();
+      
+      // Must start with { and end with }
+      if (!trimmedContent.startsWith('{') || !trimmedContent.endsWith('}')) {
+        console.warn('⚠️ Response does not have proper JSON boundaries');
+        return false;
+      }
+      
+      // Check for incomplete JSON patterns
+      const incompletePatterns = [
+        /{\s*"claims":\s*$/,  // Ends with "claims": 
+        /{\s*"claims":\s*\[?\s*$/,  // Ends with "claims": [
+        /,\s*$/,  // Ends with comma
+        /:\s*$/,  // Ends with colon
+        /"\s*$/   // Ends with quote
+      ];
+      
+      for (const pattern of incompletePatterns) {
+        if (pattern.test(trimmedContent)) {
+          console.warn('⚠️ Response matches incomplete pattern:', pattern);
+          return false;
+        }
+      }
+      
+      // Try to parse as JSON to verify completeness
+      try {
+        JSON.parse(trimmedContent);
+        return true;
+      } catch (parseError) {
+        console.warn('⚠️ Response is not valid JSON:', parseError.message);
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Error checking response completeness:', error);
+      return false;
+    }
+  }
+  
   async function makeAIAPICall(provider, model, messages, apiKey) {
     let apiUrl, headers, body;
     
@@ -788,7 +886,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       body = {
         model: model,
         messages: messages,
-        temperature: 0.3,
+        temperature: 0.1, // Lower temperature for more consistent JSON
         max_tokens: 4000
       };
     } else if (provider === 'gemini') {
@@ -802,7 +900,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
           parts: [{ text: msg.content }]
         })),
         generationConfig: {
-          temperature: 0.3,
+          temperature: 0.1, // Lower temperature for more consistent JSON
           maxOutputTokens: 4000
         }
       };
@@ -817,8 +915,12 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       body = {
         model: model,
         messages: messages,
-        temperature: 0.3,
-        max_tokens: 4000
+        temperature: 0.1, // Lower temperature for more consistent JSON
+        max_tokens: 4000,
+        // Add specific parameters for better completion
+        top_p: 0.9,
+        frequency_penalty: 0,
+        presence_penalty: 0
       };
     } else {
       throw new Error(`Unsupported AI provider: ${provider}`);
@@ -914,6 +1016,18 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
     
     content = content.substring(jsonStart, jsonEnd + 1);
     
+    // Check for incomplete JSON patterns and try to fix them
+    if (content.match(/{\s*"claims":\s*$/)) {
+      // Incomplete: ends with "claims":
+      content = '{"claims": []}';
+    } else if (content.match(/{\s*"claims":\s*\[\s*$/)) {
+      // Incomplete: ends with "claims": [
+      content = '{"claims": []}';
+    } else if (content.endsWith(',')) {
+      // Remove trailing comma
+      content = content.slice(0, -1);
+    }
+    
     // Fix common JSON formatting issues
     content = content
       // Fix unescaped quotes in strings
@@ -940,6 +1054,12 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       return null;
     }
     
+    // If the response is incomplete, return empty claims
+    if (!content || content.trim().length < 10) {
+      console.warn('⚠️ Response too short, returning empty claims');
+      return { claims: [] };
+    }
+    
     // Look for any mention of claims or lies
     const claimsMatch = content.match(/claims?\s*[:=]\s*\[([^\]]*)\]/i);
     if (claimsMatch) {
@@ -952,6 +1072,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
     }
     
     // If no structured data found, return empty result
+    console.warn('⚠️ No valid claims data found in response, returning empty claims');
     return { claims: [] };
   }
   
