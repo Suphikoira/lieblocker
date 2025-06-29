@@ -120,21 +120,40 @@
   }
   
   function setupSettingsListeners() {
+    console.log('🔧 Setting up settings listeners...');
+    
     // AI Provider change
     const aiProviderSelect = document.getElementById('ai-provider');
     if (aiProviderSelect) {
-      aiProviderSelect.addEventListener('change', handleAIProviderChange);
+      aiProviderSelect.addEventListener('change', (event) => {
+        console.log('🔄 AI Provider changed to:', event.target.value);
+        handleAIProviderChange();
+        // Save immediately when provider changes
+        setTimeout(() => saveSettingsSecurely(true), 100); // Small delay to ensure UI updates
+      });
+      console.log('✅ AI Provider listener added');
+    } else {
+      console.warn('⚠️ AI Provider select not found');
     }
     
     // API Key input with secure storage
     const apiKeyInput = document.getElementById('api-key');
     if (apiKeyInput) {
       // Save immediately on input with debouncing
-      apiKeyInput.addEventListener('input', debounce(saveSettingsSecurely, 1000));
+      apiKeyInput.addEventListener('input', debounce(() => {
+        console.log('🔑 API Key input changed');
+        saveSettingsSecurely(true);
+      }, 1000));
       // Save on blur for immediate persistence
-      apiKeyInput.addEventListener('blur', saveSettingsSecurely);
+      apiKeyInput.addEventListener('blur', () => {
+        console.log('🔑 API Key blur event');
+        saveSettingsSecurely(true);
+      });
       // Save on change for compatibility
-      apiKeyInput.addEventListener('change', saveSettingsSecurely);
+      apiKeyInput.addEventListener('change', () => {
+        console.log('🔑 API Key change event');
+        saveSettingsSecurely(true);
+      });
       
       // Visual feedback for secure storage
       apiKeyInput.addEventListener('focus', () => {
@@ -144,20 +163,36 @@
       apiKeyInput.addEventListener('blur', () => {
         setTimeout(() => showSecurityIndicator(false), 2000);
       });
+      
+      console.log('✅ API Key listeners added');
+    } else {
+      console.warn('⚠️ API Key input not found');
     }
     
     // Analysis duration
     const durationSlider = document.getElementById('analysis-duration');
     if (durationSlider) {
       durationSlider.addEventListener('input', updateDurationDisplay);
-      durationSlider.addEventListener('change', saveSettingsSecurely);
+      durationSlider.addEventListener('change', () => {
+        console.log('📊 Analysis duration changed to:', durationSlider.value);
+        saveSettingsSecurely(true);
+      });
+      console.log('✅ Duration slider listeners added');
+    } else {
+      console.warn('⚠️ Duration slider not found');
     }
 
     // Confidence threshold
     const confidenceSlider = document.getElementById('min-confidence-threshold');
     if (confidenceSlider) {
       confidenceSlider.addEventListener('input', updateConfidenceDisplay);
-      confidenceSlider.addEventListener('change', saveSettingsSecurely);
+      confidenceSlider.addEventListener('change', () => {
+        console.log('🎯 Confidence threshold changed to:', confidenceSlider.value);
+        saveSettingsSecurely(true);
+      });
+      console.log('✅ Confidence slider listeners added');
+    } else {
+      console.warn('⚠️ Confidence slider not found');
     }
     
     // Model selects - Set up all model select listeners
@@ -166,23 +201,33 @@
     // Severity checkboxes
     const severityCheckboxes = document.querySelectorAll('.severity-checkboxes input[type="checkbox"]');
     severityCheckboxes.forEach(checkbox => {
-      checkbox.addEventListener('change', handleSeverityChange);
+      checkbox.addEventListener('change', (event) => {
+        console.log('🎯 Severity checkbox changed:', event.target.value, event.target.checked);
+        handleSeverityChange();
+      });
     });
+    console.log(`✅ ${severityCheckboxes.length} severity checkbox listeners added`);
     
     // Clear cache button
     const clearCacheBtn = document.getElementById('clear-cache');
     if (clearCacheBtn) {
       clearCacheBtn.addEventListener('click', clearCache);
+      console.log('✅ Clear cache button listener added');
     }
     
     // Export settings button
     const exportBtn = document.getElementById('export-settings');
     if (exportBtn) {
       exportBtn.addEventListener('click', exportSettings);
+      console.log('✅ Export settings button listener added');
     }
+    
+    console.log('✅ All settings listeners set up');
   }
 
   function setupModelSelectListeners() {
+    console.log('🔧 Setting up model select listeners...');
+    
     // Set up listeners for all model selects
     const modelSelects = [
       { id: 'openai-model', provider: 'openai' },
@@ -193,10 +238,15 @@
     modelSelects.forEach(({ id, provider }) => {
       const select = document.getElementById(id);
       if (select) {
-        select.addEventListener('change', (event) => {
+        // Remove any existing listeners first
+        const newSelect = select.cloneNode(true);
+        select.parentNode.replaceChild(newSelect, select);
+        
+        // Add the event listener to the new element
+        newSelect.addEventListener('change', (event) => {
           console.log(`🔄 ${provider} model changed to:`, event.target.value);
           // Save settings immediately when model changes
-          saveSettingsSecurely(true); // Silent save
+          setTimeout(() => saveSettingsSecurely(true), 50); // Small delay to ensure value is set
         });
         console.log(`✅ Event listener added for ${id}`);
       } else {
@@ -540,7 +590,9 @@
       // AI Provider
       const aiProviderSelect = document.getElementById('ai-provider');
       if (aiProviderSelect) {
-        aiProviderSelect.value = settings.aiProvider || 'openai';
+        const savedProvider = settings.aiProvider || 'openai';
+        console.log('🔄 Setting AI provider to:', savedProvider);
+        aiProviderSelect.value = savedProvider;
         handleAIProviderChange(); // Update model visibility
       }
       
@@ -550,11 +602,15 @@
       const openrouterModelSelect = document.getElementById('openrouter-model');
       
       if (openaiModelSelect) {
-        openaiModelSelect.value = settings.openaiModel || 'gpt-4o-mini';
+        const savedModel = settings.openaiModel || 'gpt-4o-mini';
+        console.log('🔄 Setting OpenAI model to:', savedModel);
+        openaiModelSelect.value = savedModel;
       }
       
       if (geminiModelSelect) {
-        geminiModelSelect.value = settings.geminiModel || 'gemini-2.0-flash-exp';
+        const savedModel = settings.geminiModel || 'gemini-2.0-flash-exp';
+        console.log('🔄 Setting Gemini model to:', savedModel);
+        geminiModelSelect.value = savedModel;
       }
 
       if (openrouterModelSelect) {
@@ -600,19 +656,24 @@
       // Analysis Duration
       const durationSlider = document.getElementById('analysis-duration');
       if (durationSlider) {
-        durationSlider.value = settings.analysisDuration || 60; // Default to 60 minutes
+        const savedDuration = settings.analysisDuration || 60; // Default to 60 minutes
+        console.log('🔄 Setting analysis duration to:', savedDuration);
+        durationSlider.value = savedDuration;
         updateDurationDisplay();
       }
 
       // Confidence Threshold
       const confidenceSlider = document.getElementById('min-confidence-threshold');
       if (confidenceSlider) {
-        confidenceSlider.value = settings.minConfidenceThreshold || 0; // Default to 0%
+        const savedConfidence = settings.minConfidenceThreshold || 0; // Default to 0%
+        console.log('🔄 Setting confidence threshold to:', savedConfidence);
+        confidenceSlider.value = savedConfidence;
         updateConfidenceDisplay();
       }
 
       // Selected Severities
       const selectedSeverities = settings.selectedSeverities || ['critical', 'high', 'medium', 'low'];
+      console.log('🔄 Setting selected severities to:', selectedSeverities);
       const severityCheckboxes = document.querySelectorAll('.severity-checkboxes input[type="checkbox"]');
       severityCheckboxes.forEach(checkbox => {
         checkbox.checked = selectedSeverities.includes(checkbox.value);
@@ -621,12 +682,16 @@
       // Skip Lies Toggle
       const skipToggle = document.getElementById('skip-lies-toggle');
       if (skipToggle) {
-        if (settings.skipLiesEnabled) {
+        const skipEnabled = settings.skipLiesEnabled || false;
+        console.log('🔄 Setting skip lies to:', skipEnabled);
+        if (skipEnabled) {
           skipToggle.classList.add('active');
         } else {
           skipToggle.classList.remove('active');
         }
       }
+      
+      console.log('✅ All settings loaded successfully');
       
     } catch (error) {
       console.error('❌ Error loading settings:', error);
@@ -692,8 +757,10 @@
     const checkboxes = document.querySelectorAll('.severity-checkboxes input[type="checkbox"]:checked');
     const selectedSeverities = Array.from(checkboxes).map(cb => cb.value);
     
-    // Save to storage
-    await chrome.storage.local.set({ selectedSeverities });
+    console.log('🎯 Selected severities changed to:', selectedSeverities);
+    
+    // Save to storage immediately
+    await saveSettingsSecurely(true); // Silent save
     
     // Update lies list immediately
     updateLiesList();
