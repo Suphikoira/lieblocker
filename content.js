@@ -20,6 +20,7 @@
   let autoAnalysisEnabled = true; // New flag for automatic analysis
   let transcriptCheckInterval = null;
   let analysisQueue = new Set(); // Track videos queued for analysis
+  let rateLimiter = null; // Rate limiter instance
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
@@ -41,6 +42,14 @@
       }
     } else {
       console.warn('⚠️ SecurityService not available in content script');
+    }
+
+    // Initialize rate limiter if available
+    if (typeof RateLimiter !== 'undefined') {
+      rateLimiter = window.RateLimiter;
+      console.log('⚡ Rate limiter initialized in content script');
+    } else {
+      console.warn('⚠️ RateLimiter not available in content script');
     }
     
     // Set up video change detection
@@ -417,7 +426,7 @@
     }
   }
   
-  // New function for real-time analysis
+  // New function for real-time analysis with rate limiting
   async function analyzeTranscriptRealTime(transcript, videoData) {
     const settings = await getSettings();
     const analysisDuration = settings.analysisDuration || 60;
@@ -435,11 +444,50 @@
       processedMinutes += chunk.durationMinutes;
       
       try {
+        // Check rate limits before making API call
+        if (rateLimiter) {
+          const rateLimitCheck = await rateLimiter.isAllowed(
+            'chunk_analysis', 
+            'default', 
+            settings.aiProvider, 
+            settings.aiModel
+          );
+          
+          if (!rateLimitCheck.allowed) {
+            console.warn(`⚠️ Rate limit exceeded: ${rateLimitCheck.message}`);
+            
+            // Update progress with rate limit info
+            chrome.runtime.sendMessage({
+              type: 'analysisProgress',
+              stage: 'rate_limit',
+              message: `Rate limit reached. Waiting ${rateLimitCheck.waitTimeSeconds} seconds...`
+            });
+            
+            // Wait for rate limit to reset
+            await new Promise(resolve => setTimeout(resolve, rateLimitCheck.waitTimeMs));
+            
+            // Try again after waiting
+            const retryCheck = await rateLimiter.isAllowed(
+              'chunk_analysis', 
+              'default', 
+              settings.aiProvider, 
+              settings.aiModel
+            );
+            
+            if (!retryCheck.allowed) {
+              console.error('❌ Still rate limited after waiting, skipping chunk');
+              continue;
+            }
+          }
+          
+          console.log(`✅ Rate limit check passed: ${rateLimitCheck.remaining}/${rateLimitCheck.total} requests remaining`);
+        }
+        
         // Update progress
         chrome.runtime.sendMessage({
           type: 'analysisProgress',
           stage: 'analysis',
-          message: `Analyzing minute ${processedMinutes}/${analysisDuration}...`
+          message: `Analyzing minute ${processedMinutes}/${analysisDuration}... (${allLies.length} lies found so far)`
         });
         
         // Analyze this chunk
@@ -465,11 +513,27 @@
           console.log(`📊 Found ${filteredLies.length} new lies in chunk ${i + 1}, total: ${allLies.length}`);
         }
         
-        // Small delay to prevent overwhelming the API
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Adaptive delay based on provider and rate limits
+        const delay = getAdaptiveDelay(settings.aiProvider, settings.aiModel);
+        if (delay > 0) {
+          console.log(`⏳ Waiting ${delay}ms before next chunk...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
         
       } catch (error) {
         console.error(`❌ Error analyzing chunk ${i + 1}:`, error);
+        
+        // If it's a rate limit error, wait longer
+        if (error.message.includes('rate limit') || error.message.includes('429')) {
+          console.log('⏳ Rate limit error detected, waiting 60 seconds...');
+          chrome.runtime.sendMessage({
+            type: 'analysisProgress',
+            stage: 'rate_limit',
+            message: 'Rate limit exceeded. Waiting 60 seconds before continuing...'
+          });
+          await new Promise(resolve => setTimeout(resolve, 60000));
+        }
+        
         // Continue with next chunk
       }
     }
@@ -479,6 +543,22 @@
       totalLies: allLies.length,
       analysisDuration: analysisDuration
     };
+  }
+  
+  function getAdaptiveDelay(provider, model) {
+    // Return delay in milliseconds based on provider and model
+    if (provider === 'openrouter' && model && model.includes(':free')) {
+      // OpenRouter free models: 20 requests/minute = 3 seconds between requests
+      return 3500; // 3.5 seconds to be safe
+    } else if (provider === 'gemini') {
+      // Gemini models: more generous but still throttle
+      return 1500; // 1.5 seconds
+    } else if (provider === 'openai') {
+      // OpenAI: moderate throttling
+      return 2000; // 2 seconds
+    }
+    
+    return 1000; // Default 1 second delay
   }
   
   function splitTranscriptIntoChunks(transcript, totalDurationMinutes) {

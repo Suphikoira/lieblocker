@@ -401,7 +401,13 @@
     try {
       console.log('💉 Injecting content script files...');
       
-      // Inject security service first
+      // Inject rate limiter first
+      await chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        files: ['src/utils/rateLimiter.js']
+      });
+      
+      // Inject security service
       await chrome.scripting.executeScript({
         target: { tabId: tabId },
         files: ['src/services/securityService.js']
