@@ -19,6 +19,7 @@
   let securityService = null;
   let autoSkipInterval = null;
   let lastSkippedLie = null;
+  let skipCheckActive = false;
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
@@ -89,10 +90,7 @@
       lastSkippedLie = null;
       
       // Clear any existing auto-skip interval
-      if (autoSkipInterval) {
-        clearInterval(autoSkipInterval);
-        autoSkipInterval = null;
-      }
+      cleanupAutoSkip();
       
       // Get video player reference
       videoPlayer = document.querySelector('video');
@@ -152,10 +150,8 @@
     
     if (enabled && currentLies.length > 0) {
       setupAutoSkip();
-    } else if (!enabled && autoSkipInterval) {
-      clearInterval(autoSkipInterval);
-      autoSkipInterval = null;
-      console.log('⏹️ Auto-skip disabled');
+    } else if (!enabled) {
+      cleanupAutoSkip();
     }
   }
   
@@ -1039,74 +1035,103 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
     }
   }
   
-  // Enhanced auto-skip functionality
+  // Enhanced auto-skip functionality with better reliability
   function setupAutoSkip() {
-    if (!videoPlayer || !skipLiesEnabled || currentLies.length === 0) {
+    // Ensure we have everything needed
+    if (!skipLiesEnabled || currentLies.length === 0) {
       console.log('⏭️ Auto-skip setup skipped:', {
-        hasPlayer: !!videoPlayer,
         enabled: skipLiesEnabled,
         liesCount: currentLies.length
       });
       return;
     }
     
-    // Clear any existing interval
-    if (autoSkipInterval) {
-      clearInterval(autoSkipInterval);
+    // Get fresh video player reference
+    videoPlayer = document.querySelector('video');
+    if (!videoPlayer) {
+      console.log('⏭️ No video player found, retrying in 2 seconds...');
+      setTimeout(setupAutoSkip, 2000);
+      return;
     }
+    
+    // Clear any existing interval
+    cleanupAutoSkip();
     
     console.log('⏭️ Setting up auto-skip for', currentLies.length, 'lies');
     
-    // Check for lies to skip every 500ms
+    // Set up the skip checking interval
     autoSkipInterval = setInterval(() => {
-      if (!skipLiesEnabled || !videoPlayer || videoPlayer.paused) {
+      if (!skipLiesEnabled || !videoPlayer || skipCheckActive) {
         return;
       }
       
-      const currentTime = videoPlayer.currentTime;
-      
-      // Find any lie that should be skipped at current time
-      for (const lie of currentLies) {
-        const startTime = lie.timestamp_seconds;
-        const endTime = startTime + (lie.duration_seconds || 10);
-        
-        // Check if we're within the lie timeframe
-        if (currentTime >= startTime && currentTime < endTime) {
-          // Avoid skipping the same lie multiple times
-          if (lastSkippedLie && 
-              lastSkippedLie.timestamp_seconds === startTime && 
-              Date.now() - lastSkippedLie.skipTime < 5000) {
-            continue;
-          }
-          
-          // Skip this lie
-          console.log('⏭️ Skipping lie at', formatTimestamp(startTime), '-', formatTimestamp(endTime));
-          videoPlayer.currentTime = endTime;
-          
-          // Track the skip
-          lastSkippedLie = {
-            ...lie,
-            skipTime: Date.now()
-          };
-          
-          // Show skip notification
-          showSkipNotification(lie);
-          
-          // Track skip for statistics
-          chrome.runtime.sendMessage({
-            type: 'lieSkipped',
-            videoId: currentVideoId,
-            timestamp: startTime,
-            duration: lie.duration_seconds || 10,
-            claim: lie.claim_text
-          });
-          
-          break; // Only skip one lie at a time
-        }
+      // Skip if video is paused or not ready
+      if (videoPlayer.paused || videoPlayer.readyState < 2) {
+        return;
       }
-    }, 500);
+      
+      skipCheckActive = true;
+      
+      try {
+        const currentTime = videoPlayer.currentTime;
+        
+        // Find any lie that should be skipped at current time
+        for (const lie of currentLies) {
+          const startTime = lie.timestamp_seconds;
+          const endTime = startTime + (lie.duration_seconds || 10);
+          
+          // Check if we're within the lie timeframe
+          if (currentTime >= startTime && currentTime < endTime) {
+            // Avoid skipping the same lie multiple times
+            if (lastSkippedLie && 
+                lastSkippedLie.timestamp_seconds === startTime && 
+                Date.now() - lastSkippedLie.skipTime < 3000) {
+              continue;
+            }
+            
+            // Skip this lie
+            console.log('⏭️ Skipping lie at', formatTimestamp(startTime), '-', formatTimestamp(endTime));
+            
+            // Jump to end of lie
+            videoPlayer.currentTime = endTime + 0.5; // Add small buffer
+            
+            // Track the skip
+            lastSkippedLie = {
+              ...lie,
+              skipTime: Date.now()
+            };
+            
+            // Show skip notification
+            showSkipNotification(lie);
+            
+            // Track skip for statistics
+            chrome.runtime.sendMessage({
+              type: 'lieSkipped',
+              videoId: currentVideoId,
+              timestamp: startTime,
+              duration: lie.duration_seconds || 10,
+              claim: lie.claim_text
+            });
+            
+            break; // Only skip one lie at a time
+          }
+        }
+      } catch (error) {
+        console.error('❌ Error in skip check:', error);
+      } finally {
+        skipCheckActive = false;
+      }
+    }, 250); // Check every 250ms for better responsiveness
     
     console.log('✅ Auto-skip enabled with interval ID:', autoSkipInterval);
+  }
+  
+  function cleanupAutoSkip() {
+    if (autoSkipInterval) {
+      clearInterval(autoSkipInterval);
+      autoSkipInterval = null;
+      console.log('🧹 Auto-skip interval cleared');
+    }
   }
   
   function formatTimestamp(seconds) {
@@ -1116,7 +1141,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
   }
   
   function showSkipNotification(lie) {
-    // Clear any existing notification
+    // Clear any existing notification timeout
     if (skipNotificationTimeout) {
       clearTimeout(skipNotificationTimeout);
     }
@@ -1169,7 +1194,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
     // Remove notification after 4 seconds
     skipNotificationTimeout = setTimeout(() => {
       if (notification.parentNode) {
-        notification.style.animation = 'slideOut 0.3s ease';
+        notification.style.animation = 'slideOut 0.3s ease-in-out';
         setTimeout(() => {
           if (notification.parentNode) {
             notification.parentNode.removeChild(notification);
@@ -1209,9 +1234,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
   
   // Clean up on page unload
   window.addEventListener('beforeunload', () => {
-    if (autoSkipInterval) {
-      clearInterval(autoSkipInterval);
-    }
+    cleanupAutoSkip();
     if (skipNotificationTimeout) {
       clearTimeout(skipNotificationTimeout);
     }
