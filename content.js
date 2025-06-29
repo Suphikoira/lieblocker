@@ -1,4 +1,4 @@
-// Enhanced YouTube transcript extraction with robust communication and ping handling
+// Enhanced YouTube transcript extraction with automatic analysis on video load
 // This content script runs on YouTube pages and handles video analysis
 
 (function() {
@@ -17,6 +17,9 @@
   let videoPlayer = null;
   let skipNotificationTimeout = null;
   let securityService = null;
+  let autoAnalysisEnabled = true; // New flag for automatic analysis
+  let transcriptCheckInterval = null;
+  let analysisQueue = new Set(); // Track videos queued for analysis
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
@@ -49,7 +52,7 @@
     // Load skip lies setting
     loadSkipLiesSetting();
     
-    // Initial video detection
+    // Initial video detection and analysis
     detectVideoChange();
     
     console.log('✅ LieBlocker content script initialized');
@@ -62,6 +65,7 @@
     const observer = new MutationObserver(() => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
+        console.log('🔄 URL changed, detecting new video...');
         setTimeout(detectVideoChange, 1000); // Delay to ensure page is loaded
       }
     });
@@ -73,6 +77,13 @@
     
     // Also listen for popstate events
     window.addEventListener('popstate', () => {
+      console.log('🔄 Popstate event, detecting video change...');
+      setTimeout(detectVideoChange, 1000);
+    });
+    
+    // Listen for YouTube's navigation events
+    window.addEventListener('yt-navigate-finish', () => {
+      console.log('🔄 YouTube navigation finished, detecting video change...');
       setTimeout(detectVideoChange, 1000);
     });
   }
@@ -85,17 +96,155 @@
       currentVideoId = videoId;
       currentLies = [];
       
+      // Clear any existing transcript check interval
+      if (transcriptCheckInterval) {
+        clearInterval(transcriptCheckInterval);
+        transcriptCheckInterval = null;
+      }
+      
       // Get video player reference
       videoPlayer = document.querySelector('video');
       
       // Load lies for this video from background storage
       loadCurrentVideoLies(videoId);
+      
+      // Start automatic analysis if enabled and not already analyzing
+      if (autoAnalysisEnabled && !isAnalyzing && !analysisQueue.has(videoId)) {
+        console.log('🤖 Starting automatic analysis for video:', videoId);
+        startAutomaticAnalysis(videoId);
+      }
     }
   }
   
   function extractVideoId() {
     const urlParams = new URLSearchParams(window.location.search);
     return urlParams.get('v');
+  }
+  
+  async function startAutomaticAnalysis(videoId) {
+    try {
+      // Add to analysis queue to prevent duplicate analysis
+      analysisQueue.add(videoId);
+      
+      // Check if we already have cached results
+      const cachedResults = await checkCachedResults(videoId);
+      if (cachedResults) {
+        console.log('📋 Found cached results for video:', videoId);
+        currentLies = cachedResults.lies || [];
+        
+        chrome.runtime.sendMessage({
+          type: 'liesUpdate',
+          claims: currentLies,
+          videoId: videoId,
+          isComplete: true
+        });
+        
+        chrome.runtime.sendMessage({
+          type: 'analysisResult',
+          data: `Analysis loaded from cache. Found ${currentLies.length} lies.`
+        });
+        
+        analysisQueue.delete(videoId);
+        return;
+      }
+      
+      // Wait for transcript to be available
+      console.log('⏳ Waiting for transcript to be available...');
+      const transcriptAvailable = await waitForTranscript();
+      
+      if (!transcriptAvailable) {
+        console.log('❌ No transcript available for video:', videoId);
+        analysisQueue.delete(videoId);
+        
+        chrome.runtime.sendMessage({
+          type: 'analysisResult',
+          data: 'No transcript available for this video'
+        });
+        return;
+      }
+      
+      console.log('✅ Transcript available, starting analysis...');
+      
+      // Start the analysis process
+      await handleAnalyzeVideo();
+      
+    } catch (error) {
+      console.error('❌ Automatic analysis failed:', error);
+      analysisQueue.delete(videoId);
+      
+      chrome.runtime.sendMessage({
+        type: 'analysisResult',
+        data: `Automatic analysis failed: ${error.message}`
+      });
+    }
+  }
+  
+  async function waitForTranscript(maxWaitTime = 30000) {
+    const startTime = Date.now();
+    
+    return new Promise((resolve) => {
+      const checkTranscript = () => {
+        // Check if transcript is available
+        if (isTranscriptAvailable()) {
+          console.log('✅ Transcript found!');
+          resolve(true);
+          return;
+        }
+        
+        // Check if we've exceeded max wait time
+        if (Date.now() - startTime > maxWaitTime) {
+          console.log('⏰ Transcript wait timeout');
+          resolve(false);
+          return;
+        }
+        
+        // Continue checking
+        setTimeout(checkTranscript, 2000);
+      };
+      
+      // Start checking immediately
+      checkTranscript();
+    });
+  }
+  
+  function isTranscriptAvailable() {
+    // Check for transcript button
+    const transcriptButton = findTranscriptButton();
+    if (!transcriptButton) {
+      return false;
+    }
+    
+    // Check if transcript panel is already open
+    if (isTranscriptPanelOpen()) {
+      const segments = findTranscriptSegments();
+      return segments.length > 0;
+    }
+    
+    // Try to click transcript button to check availability
+    try {
+      transcriptButton.click();
+      
+      // Wait a moment for panel to load
+      setTimeout(() => {
+        const segments = findTranscriptSegments();
+        const available = segments.length > 0;
+        
+        if (!available) {
+          // Close transcript panel if no segments found
+          const closeButton = document.querySelector('[aria-label*="Close transcript"]');
+          if (closeButton) {
+            closeButton.click();
+          }
+        }
+        
+        return available;
+      }, 1000);
+      
+      return true; // Assume available if button exists and is clickable
+    } catch (error) {
+      console.log('❌ Error checking transcript availability:', error);
+      return false;
+    }
   }
   
   function setupMessageListener() {
@@ -117,6 +266,10 @@
         } else if (message.type === 'jumpToTimestamp') {
           jumpToTimestamp(message.timestamp);
           sendResponse({ success: true });
+        } else if (message.type === 'toggleAutoAnalysis') {
+          autoAnalysisEnabled = message.enabled;
+          console.log('🤖 Auto analysis toggled:', autoAnalysisEnabled);
+          sendResponse({ success: true });
         } else {
           sendResponse({ success: true, message: 'Message received' });
         }
@@ -127,15 +280,17 @@
     });
   }
   
-  async function handleAnalyzeVideo(sendResponse) {
+  async function handleAnalyzeVideo(sendResponse = null) {
     if (isAnalyzing) {
-      sendResponse({ success: false, error: 'Analysis already in progress' });
+      const error = 'Analysis already in progress';
+      if (sendResponse) sendResponse({ success: false, error });
       return;
     }
     
     const videoId = extractVideoId();
     if (!videoId) {
-      sendResponse({ success: false, error: 'No video ID found' });
+      const error = 'No video ID found';
+      if (sendResponse) sendResponse({ success: false, error });
       return;
     }
     
@@ -152,7 +307,7 @@
       chrome.runtime.sendMessage({
         type: 'analysisProgress',
         stage: 'starting',
-        message: 'Starting video analysis...'
+        message: 'Starting automatic video analysis...'
       });
       
       // CRITICAL: Check API key before proceeding with analysis
@@ -194,7 +349,8 @@
         });
         
         isAnalyzing = false;
-        sendResponse({ success: true, cached: true });
+        analysisQueue.delete(videoId);
+        if (sendResponse) sendResponse({ success: true, cached: true });
         return;
       }
       
@@ -215,14 +371,14 @@
       // Get video metadata
       const videoData = await getVideoMetadata();
       
-      // Analyze transcript with AI
+      // Start real-time analysis
       chrome.runtime.sendMessage({
         type: 'analysisProgress',
         stage: 'analysis',
-        message: 'Analyzing transcript for lies...'
+        message: 'Analyzing transcript for lies in real-time...'
       });
       
-      const analysisResults = await analyzeTranscriptWithAI(transcript, videoData);
+      const analysisResults = await analyzeTranscriptRealTime(transcript, videoData);
       
       // Store results
       await storeAnalysisResults(videoId, videoData, analysisResults);
@@ -244,7 +400,8 @@
       });
       
       isAnalyzing = false;
-      sendResponse({ success: true, lies: currentLies });
+      analysisQueue.delete(videoId);
+      if (sendResponse) sendResponse({ success: true, lies: currentLies });
       
     } catch (error) {
       console.error('❌ Analysis failed:', error);
@@ -255,8 +412,158 @@
       });
       
       isAnalyzing = false;
-      sendResponse({ success: false, error: error.message });
+      analysisQueue.delete(videoId);
+      if (sendResponse) sendResponse({ success: false, error: error.message });
     }
+  }
+  
+  // New function for real-time analysis
+  async function analyzeTranscriptRealTime(transcript, videoData) {
+    const settings = await getSettings();
+    const analysisDuration = settings.analysisDuration || 60;
+    const minConfidenceThreshold = settings.minConfidenceThreshold || 0;
+    
+    // Split transcript into chunks for real-time processing
+    const chunks = splitTranscriptIntoChunks(transcript, analysisDuration);
+    let allLies = [];
+    let processedMinutes = 0;
+    
+    console.log(`📊 Processing ${chunks.length} chunks for real-time analysis`);
+    
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      processedMinutes += chunk.durationMinutes;
+      
+      try {
+        // Update progress
+        chrome.runtime.sendMessage({
+          type: 'analysisProgress',
+          stage: 'analysis',
+          message: `Analyzing minute ${processedMinutes}/${analysisDuration}...`
+        });
+        
+        // Analyze this chunk
+        const chunkResults = await analyzeTranscriptChunk(chunk, videoData, settings);
+        
+        if (chunkResults.lies && chunkResults.lies.length > 0) {
+          // Filter by confidence threshold
+          const filteredLies = chunkResults.lies.filter(claim => 
+            (claim.confidence || 0) >= (minConfidenceThreshold / 100)
+          );
+          
+          allLies = allLies.concat(filteredLies);
+          
+          // Send real-time update
+          chrome.runtime.sendMessage({
+            type: 'liesUpdate',
+            claims: allLies,
+            videoId: currentVideoId,
+            isComplete: false,
+            progress: `${processedMinutes}/${analysisDuration} minutes analyzed`
+          });
+          
+          console.log(`📊 Found ${filteredLies.length} new lies in chunk ${i + 1}, total: ${allLies.length}`);
+        }
+        
+        // Small delay to prevent overwhelming the API
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+      } catch (error) {
+        console.error(`❌ Error analyzing chunk ${i + 1}:`, error);
+        // Continue with next chunk
+      }
+    }
+    
+    return {
+      lies: allLies,
+      totalLies: allLies.length,
+      analysisDuration: analysisDuration
+    };
+  }
+  
+  function splitTranscriptIntoChunks(transcript, totalDurationMinutes) {
+    const lines = transcript.split('\n').filter(line => line.trim());
+    const chunksPerMinute = Math.ceil(lines.length / totalDurationMinutes);
+    const chunks = [];
+    
+    for (let i = 0; i < totalDurationMinutes; i++) {
+      const startIndex = i * chunksPerMinute;
+      const endIndex = Math.min((i + 1) * chunksPerMinute, lines.length);
+      const chunkLines = lines.slice(startIndex, endIndex);
+      
+      if (chunkLines.length > 0) {
+        chunks.push({
+          text: chunkLines.join('\n'),
+          startMinute: i,
+          endMinute: i + 1,
+          durationMinutes: 1
+        });
+      }
+    }
+    
+    return chunks;
+  }
+  
+  async function analyzeTranscriptChunk(chunk, videoData, settings) {
+    // Build a focused system prompt for chunk analysis
+    const systemPrompt = `You are a fact-checking expert. Analyze this 1-minute segment of a YouTube transcript and identify false or misleading claims.
+
+DETECTION CRITERIA:
+- Only flag factual claims, not opinions or predictions
+- Require very high confidence (${Math.max(90, settings.minConfidenceThreshold)}%+) before flagging
+- Focus on clear, verifiable false claims with strong evidence
+- Be specific about what makes each claim problematic
+- Consider context and intent
+- Err on the side of caution to avoid false positives
+
+RESPONSE FORMAT:
+Respond with a JSON object containing an array of claims. Each claim should have:
+- "timestamp": The estimated timestamp in format "M:SS" (e.g., "${chunk.startMinute}:30")
+- "timeInSeconds": Timestamp converted to seconds (e.g., ${chunk.startMinute * 60 + 30})
+- "duration": Estimated duration of the lie in seconds (5-30, based on actual complexity)
+- "claim": The specific false or misleading statement (exact quote from transcript)
+- "explanation": Why this claim is problematic (1-2 sentences)
+- "confidence": Your confidence level (0.0-1.0)
+- "severity": "low", "medium", "high", or "critical"
+
+Example response:
+{
+  "claims": [
+    {
+      "timestamp": "${chunk.startMinute}:23",
+      "timeInSeconds": ${chunk.startMinute * 60 + 23},
+      "duration": 12,
+      "claim": "Vaccines contain microchips",
+      "explanation": "This is a debunked conspiracy theory with no scientific evidence.",
+      "confidence": 0.95,
+      "severity": "critical"
+    }
+  ]
+}
+
+IMPORTANT: Only return the JSON object. Do not include any other text.`;
+    
+    const messages = [
+      {
+        role: 'system',
+        content: systemPrompt
+      },
+      {
+        role: 'user',
+        content: `Analyze this 1-minute segment (minute ${chunk.startMinute + 1}) of the YouTube video "${videoData.title}" by ${videoData.channelName}:\n\n${chunk.text}`
+      }
+    ];
+    
+    // Make API call
+    const response = await makeAIAPICall(settings.aiProvider, settings.aiModel, messages, settings.apiKey);
+    
+    // Parse response
+    const analysisResult = parseAIResponse(response);
+    
+    return {
+      lies: analysisResult.claims || [],
+      totalLies: (analysisResult.claims || []).length
+    };
   }
   
   function validateApiKeyFormat(provider, apiKey) {
@@ -633,52 +940,6 @@
       title,
       channelName,
       videoId: currentVideoId
-    };
-  }
-  
-  async function analyzeTranscriptWithAI(transcript, videoData) {
-    // Get settings from secure storage
-    const settings = await getSettings();
-    
-    if (!settings.apiKey) {
-      throw new Error('AI API key not configured');
-    }
-    
-    const analysisDuration = settings.analysisDuration || 60;
-    const minConfidenceThreshold = settings.minConfidenceThreshold || 0;
-    
-    // Build the system prompt
-    const systemPrompt = buildSystemPrompt(analysisDuration, minConfidenceThreshold);
-    
-    // Prepare the transcript for analysis (limit to analysis duration)
-    const limitedTranscript = limitTranscriptByDuration(transcript, analysisDuration);
-    
-    const messages = [
-      {
-        role: 'system',
-        content: systemPrompt
-      },
-      {
-        role: 'user',
-        content: `Analyze this ${analysisDuration}-minute YouTube transcript for false or misleading claims:\n\n${limitedTranscript}`
-      }
-    ];
-    
-    // Make API call
-    const response = await makeAIAPICall(settings.aiProvider, settings.aiModel, messages, settings.apiKey);
-    
-    // Parse response
-    const analysisResult = parseAIResponse(response);
-    
-    // Filter by confidence threshold
-    const filteredLies = (analysisResult.claims || []).filter(claim => 
-      (claim.confidence || 0) >= (minConfidenceThreshold / 100)
-    );
-    
-    return {
-      lies: filteredLies,
-      totalLies: filteredLies.length,
-      analysisDuration: analysisDuration
     };
   }
   
