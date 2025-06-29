@@ -160,22 +160,8 @@
       confidenceSlider.addEventListener('change', saveSettingsSecurely);
     }
     
-    // Model selects
-    const openaiModelSelect = document.getElementById('openai-model');
-    const geminiModelSelect = document.getElementById('gemini-model');
-    const openrouterModelSelect = document.getElementById('openrouter-model');
-    
-    if (openaiModelSelect) {
-      openaiModelSelect.addEventListener('change', saveSettingsSecurely);
-    }
-    
-    if (geminiModelSelect) {
-      geminiModelSelect.addEventListener('change', saveSettingsSecurely);
-    }
-
-    if (openrouterModelSelect) {
-      openrouterModelSelect.addEventListener('change', saveSettingsSecurely);
-    }
+    // Model selects - Set up all model select listeners
+    setupModelSelectListeners();
 
     // Severity checkboxes
     const severityCheckboxes = document.querySelectorAll('.severity-checkboxes input[type="checkbox"]');
@@ -194,6 +180,26 @@
     if (exportBtn) {
       exportBtn.addEventListener('click', exportSettings);
     }
+  }
+
+  function setupModelSelectListeners() {
+    // Set up listeners for all model selects
+    const modelSelects = [
+      { id: 'openai-model', provider: 'openai' },
+      { id: 'gemini-model', provider: 'gemini' },
+      { id: 'openrouter-model', provider: 'openrouter' }
+    ];
+
+    modelSelects.forEach(({ id, provider }) => {
+      const select = document.getElementById(id);
+      if (select) {
+        select.addEventListener('change', (event) => {
+          console.log(`🔄 ${provider} model changed to:`, event.target.value);
+          // Save settings immediately when model changes
+          saveSettingsSecurely(true); // Silent save
+        });
+      }
+    });
   }
   
   function showSecurityIndicator(show) {
@@ -504,7 +510,7 @@
         'skipLiesEnabled'
       ]);
       
-      console.log('📋 Regular settings loaded');
+      console.log('📋 Regular settings loaded:', result);
       
       // Merge settings with priority to secure storage
       const settings = {
@@ -535,7 +541,7 @@
         handleAIProviderChange(); // Update model visibility
       }
       
-      // Models
+      // Models - Load all model values
       const openaiModelSelect = document.getElementById('openai-model');
       const geminiModelSelect = document.getElementById('gemini-model');
       const openrouterModelSelect = document.getElementById('openrouter-model');
@@ -549,7 +555,12 @@
       }
 
       if (openrouterModelSelect) {
-        openrouterModelSelect.value = settings.openrouterModel || 'meta-llama/llama-4-maverick-17b-128e-instruct:free';
+        const savedModel = settings.openrouterModel || 'meta-llama/llama-4-maverick-17b-128e-instruct:free';
+        console.log('🔄 Setting OpenRouter model to:', savedModel);
+        openrouterModelSelect.value = savedModel;
+        
+        // Verify the value was set correctly
+        console.log('✅ OpenRouter model select value is now:', openrouterModelSelect.value);
       }
       
       // API Key - show masked version for security
@@ -628,6 +639,8 @@
     const geminiModels = document.getElementById('gemini-models');
     const openrouterModels = document.getElementById('openrouter-models');
     
+    console.log('🔄 AI Provider changed to:', aiProvider);
+    
     if (openaiModels && geminiModels && openrouterModels) {
       // Hide all model selections first
       openaiModels.classList.add('hidden');
@@ -637,10 +650,13 @@
       // Show the relevant model selection
       if (aiProvider === 'openai') {
         openaiModels.classList.remove('hidden');
+        console.log('✅ Showing OpenAI models');
       } else if (aiProvider === 'gemini') {
         geminiModels.classList.remove('hidden');
+        console.log('✅ Showing Gemini models');
       } else if (aiProvider === 'openrouter') {
         openrouterModels.classList.remove('hidden');
+        console.log('✅ Showing OpenRouter models');
       }
     }
     
@@ -703,6 +719,8 @@
         selectedSeverities: selectedSeverities,
         skipLiesEnabled: document.getElementById('skip-lies-toggle')?.classList.contains('active') || false
       };
+      
+      console.log('💾 Saving regular settings:', regularSettings);
       
       // Save regular settings to Chrome storage
       await chrome.storage.local.set(regularSettings);
