@@ -10,6 +10,7 @@
   let analysisInProgress = false;
   let backgroundState = null;
   let securityService = null;
+  let isInitializing = true; // Flag to prevent notifications during initialization
   
   // Initialize popup
   document.addEventListener('DOMContentLoaded', initialize);
@@ -18,6 +19,8 @@
     console.log('🎬 Initializing popup');
     
     try {
+      isInitializing = true; // Set flag to prevent notifications during init
+      
       // Initialize security service - check if it's available
       if (typeof SecurityService !== 'undefined') {
         securityService = new SecurityService();
@@ -48,8 +51,12 @@
       // Update UI
       updateUI();
       
+      // Initialization complete - allow notifications
+      isInitializing = false;
+      
       console.log('✅ Popup initialized successfully');
     } catch (error) {
+      isInitializing = false;
       console.error('❌ Error initializing popup:', error);
       showNotification('Failed to initialize popup: ' + error.message, 'error');
     }
@@ -416,8 +423,8 @@
         toggle.classList.remove('active');
       }
       
-      // Save setting securely
-      await saveSettingsSecurely();
+      // Save setting securely (without showing notification)
+      await saveSettingsSecurely(true); // Pass silent flag
       
       // Notify content script
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -492,7 +499,9 @@
           // Remove from regular storage
           await chrome.storage.local.remove(['apiKey']);
           settings.apiKey = result.apiKey;
-          showNotification('API key migrated to secure storage', 'success');
+          if (!isInitializing) {
+            showNotification('API key migrated to secure storage', 'success');
+          }
         } catch (error) {
           console.error('❌ Failed to migrate API key:', error);
         }
@@ -567,7 +576,9 @@
       
     } catch (error) {
       console.error('❌ Error loading settings:', error);
-      showNotification('Failed to load settings', 'error');
+      if (!isInitializing) {
+        showNotification('Failed to load settings', 'error');
+      }
     }
   }
   
@@ -586,8 +597,8 @@
       }
     }
     
-    // Save the setting
-    saveSettingsSecurely();
+    // Save the setting (silently during initialization)
+    saveSettingsSecurely(isInitializing);
   }
   
   function updateDurationDisplay() {
@@ -600,7 +611,7 @@
     }
   }
   
-  async function saveSettingsSecurely() {
+  async function saveSettingsSecurely(silent = false) {
     try {
       console.log('💾 Saving settings securely...');
       
@@ -638,41 +649,51 @@
           apiKeyInput.dataset.hasKey = 'true';
           apiKeyInput.placeholder = 'API key stored securely (click to change)';
           
-          showNotification('Settings saved securely', 'success');
+          if (!silent && !isInitializing) {
+            showNotification('Settings saved securely', 'success');
+          }
         }
       } else if (!currentApiKey || currentApiKey.includes('*')) {
-        // If empty or masked, just show success for other settings
-        showNotification('Settings saved', 'success');
+        // If empty or masked, just show success for other settings (but only if not silent)
+        if (!silent && !isInitializing) {
+          showNotification('Settings saved', 'success');
+        }
       } else if (!securityService) {
         // Fallback to regular storage if security service not available
         await chrome.storage.local.set({ apiKey: currentApiKey });
-        showNotification('Settings saved (fallback storage)', 'warning');
+        if (!silent && !isInitializing) {
+          showNotification('Settings saved (fallback storage)', 'warning');
+        }
       }
       
-      // Show success message briefly
-      const successMsg = document.getElementById('api-key-success');
-      const errorMsg = document.getElementById('api-key-error');
-      
-      if (successMsg && errorMsg) {
-        errorMsg.style.display = 'none';
-        successMsg.textContent = 'Settings saved securely';
-        successMsg.style.display = 'block';
+      // Show success message briefly (only if not silent and not initializing)
+      if (!silent && !isInitializing) {
+        const successMsg = document.getElementById('api-key-success');
+        const errorMsg = document.getElementById('api-key-error');
         
-        setTimeout(() => {
-          successMsg.style.display = 'none';
-        }, 3000);
+        if (successMsg && errorMsg) {
+          errorMsg.style.display = 'none';
+          successMsg.textContent = 'Settings saved securely';
+          successMsg.style.display = 'block';
+          
+          setTimeout(() => {
+            successMsg.style.display = 'none';
+          }, 3000);
+        }
       }
       
     } catch (error) {
       console.error('❌ Error saving settings securely:', error);
       
-      const errorMsg = document.getElementById('api-key-error');
-      if (errorMsg) {
-        errorMsg.textContent = 'Failed to save settings securely';
-        errorMsg.style.display = 'block';
+      if (!silent && !isInitializing) {
+        const errorMsg = document.getElementById('api-key-error');
+        if (errorMsg) {
+          errorMsg.textContent = 'Failed to save settings securely';
+          errorMsg.style.display = 'block';
+        }
+        
+        showNotification('Failed to save settings securely', 'error');
       }
-      
-      showNotification('Failed to save settings securely', 'error');
     }
   }
   
@@ -1005,6 +1026,11 @@
   }
   
   function showNotification(message, type = 'info') {
+    // Don't show notifications during initialization
+    if (isInitializing) {
+      return;
+    }
+    
     // Remove existing notifications
     const existingNotifications = document.querySelectorAll('.notification');
     existingNotifications.forEach(notification => {
