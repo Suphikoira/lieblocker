@@ -694,10 +694,10 @@
         }
       }
       
-      // Analysis Duration
+      // Analysis Duration - Default to 180 minutes
       const durationSlider = document.getElementById('analysis-duration');
       if (durationSlider) {
-        const savedDuration = settings.analysisDuration || 60; // Default to 60 minutes
+        const savedDuration = settings.analysisDuration || 180; // Default to 180 minutes
         console.log('🔄 Setting analysis duration to:', savedDuration);
         durationSlider.value = savedDuration;
         updateDurationDisplay();
@@ -823,7 +823,7 @@
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
         openrouterModel: document.getElementById('openrouter-model')?.value || 'meta-llama/llama-4-maverick-17b-128e-instruct:free',
-        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 60,
+        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 180, // Default to 180
         minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0,
         selectedSeverities: selectedSeverities,
         skipLiesEnabled: document.getElementById('skip-lies-toggle')?.classList.contains('active') || false
