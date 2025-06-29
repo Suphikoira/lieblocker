@@ -436,7 +436,7 @@
         toggle.classList.remove('active');
       }
       
-      // Save setting securely (without showing notification)
+      // Save setting (without showing notification)
       await saveSettingsSecurely(true); // Pass silent flag
       
       // Notify content script
@@ -575,14 +575,14 @@
       // Analysis Duration
       const durationSlider = document.getElementById('analysis-duration');
       if (durationSlider) {
-        durationSlider.value = settings.analysisDuration || 20;
+        durationSlider.value = settings.analysisDuration || 60; // Default to 60 minutes
         updateDurationDisplay();
       }
 
       // Confidence Threshold
       const confidenceSlider = document.getElementById('min-confidence-threshold');
       if (confidenceSlider) {
-        confidenceSlider.value = settings.minConfidenceThreshold || 0;
+        confidenceSlider.value = settings.minConfidenceThreshold || 0; // Default to 0%
         updateConfidenceDisplay();
       }
 
@@ -679,8 +679,8 @@
         aiProvider: document.getElementById('ai-provider')?.value || 'openai',
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
-        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 20,
-        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0,
+        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 60, // Default to 60 minutes
+        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0, // Default to 0%
         selectedSeverities: selectedSeverities,
         skipLiesEnabled: document.getElementById('skip-lies-toggle')?.classList.contains('active') || false
       };

@@ -679,8 +679,8 @@
       throw new Error('AI API key not configured');
     }
     
-    const analysisDuration = settings.analysisDuration || 20;
-    const minConfidenceThreshold = (settings.minConfidenceThreshold || 0) / 100; // Convert percentage to decimal
+    const analysisDuration = settings.analysisDuration || 60; // Default to 60 minutes
+    const minConfidenceThreshold = (settings.minConfidenceThreshold || 0) / 100; // Convert percentage to decimal, default to 0%
     
     // Build the system prompt with configurable confidence threshold
     const systemPrompt = buildSystemPrompt(analysisDuration, minConfidenceThreshold);
@@ -900,8 +900,8 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       aiProvider: result.aiProvider || 'openai',
       aiModel: result.aiModel || 'gpt-4o-mini',
       apiKey: secureSettings.apiKey || result.apiKey || '',
-      analysisDuration: result.analysisDuration || 20,
-      minConfidenceThreshold: result.minConfidenceThreshold || 0
+      analysisDuration: result.analysisDuration || 60, // Default to 60 minutes
+      minConfidenceThreshold: result.minConfidenceThreshold || 0 // Default to 0%
     };
     
     return settings;
