@@ -11,9 +11,29 @@
   let backgroundState = null;
   let securityService = null;
   let isInitializing = true; // Flag to prevent notifications during initialization
+  let pendingSave = false; // Flag to track if there's a pending save operation
   
   // Initialize popup
   document.addEventListener('DOMContentLoaded', initialize);
+  
+  // CRITICAL: Save settings before popup closes
+  window.addEventListener('beforeunload', async (event) => {
+    console.log('🚪 Popup closing - ensuring settings are saved...');
+    
+    if (pendingSave) {
+      console.log('⏳ Waiting for pending save to complete...');
+      // Force synchronous save before closing
+      await saveSettingsImmediately();
+    }
+  });
+  
+  // Also handle when popup loses focus (Chrome extension specific)
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'hidden' && pendingSave) {
+      console.log('👁️ Popup hidden - saving settings immediately...');
+      await saveSettingsImmediately();
+    }
+  });
   
   async function initialize() {
     console.log('🎬 Initializing popup');
@@ -128,8 +148,9 @@
       aiProviderSelect.addEventListener('change', (event) => {
         console.log('🔄 AI Provider changed to:', event.target.value);
         handleAIProviderChange();
-        // Save immediately when provider changes
-        setTimeout(() => saveSettingsSecurely(true), 100); // Small delay to ensure UI updates
+        // Mark as pending save and save immediately
+        markPendingSave();
+        saveSettingsImmediately();
       });
       console.log('✅ AI Provider listener added');
     } else {
@@ -142,17 +163,20 @@
       // Save immediately on input with debouncing
       apiKeyInput.addEventListener('input', debounce(() => {
         console.log('🔑 API Key input changed');
-        saveSettingsSecurely(true);
+        markPendingSave();
+        saveSettingsImmediately();
       }, 1000));
       // Save on blur for immediate persistence
       apiKeyInput.addEventListener('blur', () => {
         console.log('🔑 API Key blur event');
-        saveSettingsSecurely(true);
+        markPendingSave();
+        saveSettingsImmediately();
       });
       // Save on change for compatibility
       apiKeyInput.addEventListener('change', () => {
         console.log('🔑 API Key change event');
-        saveSettingsSecurely(true);
+        markPendingSave();
+        saveSettingsImmediately();
       });
       
       // Visual feedback for secure storage
@@ -175,7 +199,8 @@
       durationSlider.addEventListener('input', updateDurationDisplay);
       durationSlider.addEventListener('change', () => {
         console.log('📊 Analysis duration changed to:', durationSlider.value);
-        saveSettingsSecurely(true);
+        markPendingSave();
+        saveSettingsImmediately();
       });
       console.log('✅ Duration slider listeners added');
     } else {
@@ -188,7 +213,8 @@
       confidenceSlider.addEventListener('input', updateConfidenceDisplay);
       confidenceSlider.addEventListener('change', () => {
         console.log('🎯 Confidence threshold changed to:', confidenceSlider.value);
-        saveSettingsSecurely(true);
+        markPendingSave();
+        saveSettingsImmediately();
       });
       console.log('✅ Confidence slider listeners added');
     } else {
@@ -203,6 +229,7 @@
     severityCheckboxes.forEach(checkbox => {
       checkbox.addEventListener('change', (event) => {
         console.log('🎯 Severity checkbox changed:', event.target.value, event.target.checked);
+        markPendingSave();
         handleSeverityChange();
       });
     });
@@ -245,14 +272,27 @@
         // Add the event listener to the new element
         newSelect.addEventListener('change', (event) => {
           console.log(`🔄 ${provider} model changed to:`, event.target.value);
-          // Save settings immediately when model changes
-          setTimeout(() => saveSettingsSecurely(true), 50); // Small delay to ensure value is set
+          // Mark as pending save and save immediately
+          markPendingSave();
+          saveSettingsImmediately();
         });
         console.log(`✅ Event listener added for ${id}`);
       } else {
         console.warn(`⚠️ Could not find element with id: ${id}`);
       }
     });
+  }
+  
+  // Mark that we have pending changes to save
+  function markPendingSave() {
+    pendingSave = true;
+    console.log('📝 Marked settings as pending save');
+  }
+  
+  // Clear the pending save flag
+  function clearPendingSave() {
+    pendingSave = false;
+    console.log('✅ Cleared pending save flag');
   }
   
   function showSecurityIndicator(show) {
@@ -500,8 +540,9 @@
         toggle.classList.remove('active');
       }
       
-      // Save setting (without showing notification)
-      await saveSettingsSecurely(true); // Pass silent flag
+      // Save setting immediately
+      markPendingSave();
+      await saveSettingsImmediately();
       
       // Notify content script
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -727,9 +768,6 @@
         console.log('✅ Showing OpenRouter models');
       }
     }
-    
-    // Save the setting (silently during initialization)
-    saveSettingsSecurely(isInitializing);
   }
   
   function updateDurationDisplay() {
@@ -760,15 +798,16 @@
     console.log('🎯 Selected severities changed to:', selectedSeverities);
     
     // Save to storage immediately
-    await saveSettingsSecurely(true); // Silent save
+    await saveSettingsImmediately();
     
     // Update lies list immediately
     updateLiesList();
   }
   
-  async function saveSettingsSecurely(silent = false) {
+  // CRITICAL: Immediate synchronous save function
+  async function saveSettingsImmediately() {
     try {
-      console.log('💾 Saving settings securely...');
+      console.log('💾 Saving settings IMMEDIATELY...');
       
       // Get all current values from the form
       const apiKeyInput = document.getElementById('api-key');
@@ -784,54 +823,63 @@
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
         openrouterModel: document.getElementById('openrouter-model')?.value || 'meta-llama/llama-4-maverick-17b-128e-instruct:free',
-        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 60, // Default to 60 minutes
-        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0, // Default to 0%
+        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 60,
+        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0,
         selectedSeverities: selectedSeverities,
         skipLiesEnabled: document.getElementById('skip-lies-toggle')?.classList.contains('active') || false
       };
       
-      console.log('💾 Saving regular settings:', regularSettings);
+      console.log('💾 Saving regular settings IMMEDIATELY:', regularSettings);
       
-      // Save regular settings to Chrome storage
-      await chrome.storage.local.set(regularSettings);
-      console.log('✅ Regular settings saved');
-      
-      // Handle API key securely
-      if (securityService && currentApiKey && currentApiKey.trim() !== '') {
-        // Only save if it's not the masked version and not empty
-        if (!currentApiKey.includes('*') && currentApiKey.length > 10) {
-          console.log('🔒 Saving API key to secure storage...');
-          await securityService.storeSecureSettings({ apiKey: currentApiKey.trim() });
-          console.log('✅ API key saved securely');
-          
-          // Update UI to show masked version
-          const maskedKey = currentApiKey.length > 12 
-            ? currentApiKey.substring(0, 8) + '*'.repeat(Math.min(currentApiKey.length - 12, 20)) + currentApiKey.substring(currentApiKey.length - 4)
-            : '*'.repeat(currentApiKey.length);
-          
-          apiKeyInput.value = maskedKey;
-          apiKeyInput.dataset.hasKey = 'true';
-          apiKeyInput.placeholder = 'API key stored securely (click to change)';
-          
-          if (!silent && !isInitializing) {
-            showNotification('Settings saved securely', 'success');
+      // Use synchronous storage API for immediate save
+      await new Promise((resolve, reject) => {
+        chrome.storage.local.set(regularSettings, () => {
+          if (chrome.runtime.lastError) {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve();
           }
-        }
-      } else if (!currentApiKey || currentApiKey.includes('*')) {
-        // If empty or masked, just show success for other settings (but only if not silent)
-        if (!silent && !isInitializing) {
-          showNotification('Settings saved', 'success');
-        }
-      } else if (!securityService) {
-        // Fallback to regular storage if security service not available
-        await chrome.storage.local.set({ apiKey: currentApiKey });
-        if (!silent && !isInitializing) {
-          showNotification('Settings saved (fallback storage)', 'warning');
-        }
+        });
+      });
+      
+      console.log('✅ Regular settings saved IMMEDIATELY');
+      
+      // Handle API key securely if needed
+      if (securityService && currentApiKey && currentApiKey.trim() !== '' && !currentApiKey.includes('*') && currentApiKey.length > 10) {
+        console.log('🔒 Saving API key to secure storage IMMEDIATELY...');
+        await securityService.storeSecureSettings({ apiKey: currentApiKey.trim() });
+        console.log('✅ API key saved securely IMMEDIATELY');
+        
+        // Update UI to show masked version
+        const maskedKey = currentApiKey.length > 12 
+          ? currentApiKey.substring(0, 8) + '*'.repeat(Math.min(currentApiKey.length - 12, 20)) + currentApiKey.substring(currentApiKey.length - 4)
+          : '*'.repeat(currentApiKey.length);
+        
+        apiKeyInput.value = maskedKey;
+        apiKeyInput.dataset.hasKey = 'true';
+        apiKeyInput.placeholder = 'API key stored securely (click to change)';
       }
       
-      // Show success message briefly (only if not silent and not initializing)
+      // Clear pending save flag
+      clearPendingSave();
+      
+      console.log('✅ All settings saved IMMEDIATELY');
+      
+    } catch (error) {
+      console.error('❌ Error saving settings IMMEDIATELY:', error);
+      throw error; // Re-throw to handle in calling function
+    }
+  }
+  
+  // Legacy function that calls the immediate save
+  async function saveSettingsSecurely(silent = false) {
+    try {
+      await saveSettingsImmediately();
+      
+      // Show success message only if not silent and not initializing
       if (!silent && !isInitializing) {
+        showNotification('Settings saved', 'success');
+        
         const successMsg = document.getElementById('api-key-success');
         const errorMsg = document.getElementById('api-key-error');
         
