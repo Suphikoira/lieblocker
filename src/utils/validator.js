@@ -81,8 +81,8 @@ class Validator {
       return { valid: false, error: 'Analysis duration must be a number' };
     }
 
-    if (numDuration < 5 || numDuration > 60) {
-      return { valid: false, error: 'Analysis duration must be between 5 and 60 minutes' };
+    if (numDuration < 5 || numDuration > 180) {
+      return { valid: false, error: 'Analysis duration must be between 5 and 180 minutes' };
     }
 
     return { valid: true, sanitized: numDuration };
