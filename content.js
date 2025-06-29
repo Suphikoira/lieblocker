@@ -680,7 +680,7 @@
     }
     
     const analysisDuration = settings.analysisDuration || 20;
-    const minConfidenceThreshold = (settings.minConfidenceThreshold || 50) / 100; // Convert percentage to decimal
+    const minConfidenceThreshold = (settings.minConfidenceThreshold || 0) / 100; // Convert percentage to decimal
     
     // Build the system prompt with configurable confidence threshold
     const systemPrompt = buildSystemPrompt(analysisDuration, minConfidenceThreshold);
@@ -901,7 +901,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       aiModel: result.aiModel || 'gpt-4o-mini',
       apiKey: secureSettings.apiKey || result.apiKey || '',
       analysisDuration: result.analysisDuration || 20,
-      minConfidenceThreshold: result.minConfidenceThreshold || 50
+      minConfidenceThreshold: result.minConfidenceThreshold || 0
     };
     
     return settings;

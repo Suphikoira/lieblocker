@@ -582,7 +582,7 @@
       // Confidence Threshold
       const confidenceSlider = document.getElementById('min-confidence-threshold');
       if (confidenceSlider) {
-        confidenceSlider.value = settings.minConfidenceThreshold || 50;
+        confidenceSlider.value = settings.minConfidenceThreshold || 0;
         updateConfidenceDisplay();
       }
 
@@ -680,7 +680,7 @@
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
         analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 20,
-        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 50,
+        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0,
         selectedSeverities: selectedSeverities,
         skipLiesEnabled: document.getElementById('skip-lies-toggle')?.classList.contains('active') || false
       };
