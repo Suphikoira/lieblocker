@@ -35,6 +35,18 @@ class Validator {
         }
         break;
 
+      case 'openrouter':
+        if (!key.startsWith('sk-or-')) {
+          return { valid: false, error: 'OpenRouter API key must start with "sk-or-"' };
+        }
+        if (key.length < 20) {
+          return { valid: false, error: 'OpenRouter API key is too short' };
+        }
+        if (!/^sk-or-[A-Za-z0-9_-]+$/.test(key)) {
+          return { valid: false, error: 'OpenRouter API key contains invalid characters' };
+        }
+        break;
+
       default:
         return { valid: false, error: 'Unsupported AI provider' };
     }

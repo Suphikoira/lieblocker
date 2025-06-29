@@ -163,6 +163,7 @@
     // Model selects
     const openaiModelSelect = document.getElementById('openai-model');
     const geminiModelSelect = document.getElementById('gemini-model');
+    const openrouterModelSelect = document.getElementById('openrouter-model');
     
     if (openaiModelSelect) {
       openaiModelSelect.addEventListener('change', saveSettingsSecurely);
@@ -170,6 +171,10 @@
     
     if (geminiModelSelect) {
       geminiModelSelect.addEventListener('change', saveSettingsSecurely);
+    }
+
+    if (openrouterModelSelect) {
+      openrouterModelSelect.addEventListener('change', saveSettingsSecurely);
     }
 
     // Severity checkboxes
@@ -491,6 +496,7 @@
         'aiProvider',
         'openaiModel',
         'geminiModel',
+        'openrouterModel',
         'apiKey', // Fallback for existing users
         'analysisDuration',
         'minConfidenceThreshold',
@@ -532,6 +538,7 @@
       // Models
       const openaiModelSelect = document.getElementById('openai-model');
       const geminiModelSelect = document.getElementById('gemini-model');
+      const openrouterModelSelect = document.getElementById('openrouter-model');
       
       if (openaiModelSelect) {
         openaiModelSelect.value = settings.openaiModel || 'gpt-4o-mini';
@@ -539,6 +546,10 @@
       
       if (geminiModelSelect) {
         geminiModelSelect.value = settings.geminiModel || 'gemini-2.0-flash-exp';
+      }
+
+      if (openrouterModelSelect) {
+        openrouterModelSelect.value = settings.openrouterModel || 'meta-llama/llama-3.2-3b-instruct:free';
       }
       
       // API Key - show masked version for security
@@ -615,14 +626,21 @@
     const aiProvider = document.getElementById('ai-provider')?.value;
     const openaiModels = document.getElementById('openai-models');
     const geminiModels = document.getElementById('gemini-models');
+    const openrouterModels = document.getElementById('openrouter-models');
     
-    if (openaiModels && geminiModels) {
+    if (openaiModels && geminiModels && openrouterModels) {
+      // Hide all model selections first
+      openaiModels.classList.add('hidden');
+      geminiModels.classList.add('hidden');
+      openrouterModels.classList.add('hidden');
+      
+      // Show the relevant model selection
       if (aiProvider === 'openai') {
         openaiModels.classList.remove('hidden');
-        geminiModels.classList.add('hidden');
-      } else {
-        openaiModels.classList.add('hidden');
+      } else if (aiProvider === 'gemini') {
         geminiModels.classList.remove('hidden');
+      } else if (aiProvider === 'openrouter') {
+        openrouterModels.classList.remove('hidden');
       }
     }
     
@@ -679,6 +697,7 @@
         aiProvider: document.getElementById('ai-provider')?.value || 'openai',
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
+        openrouterModel: document.getElementById('openrouter-model')?.value || 'meta-llama/llama-3.2-3b-instruct:free',
         analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 60, // Default to 60 minutes
         minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0, // Default to 0%
         selectedSeverities: selectedSeverities,
@@ -1070,6 +1089,7 @@
         'aiProvider',
         'openaiModel', 
         'geminiModel',
+        'openrouterModel',
         'analysisDuration',
         'minConfidenceThreshold',
         'selectedSeverities',

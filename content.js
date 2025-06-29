@@ -307,6 +307,8 @@
         return apiKey.startsWith('sk-') && apiKey.length > 20;
       case 'gemini':
         return apiKey.length > 20; // Basic length check for Gemini
+      case 'openrouter':
+        return apiKey.startsWith('sk-or-') && apiKey.length > 20; // OpenRouter keys start with sk-or-
       default:
         return false;
     }
@@ -775,36 +777,52 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
   }
   
   async function makeAIAPICall(provider, model, messages, apiKey) {
-    const apiUrl = provider === 'openai' 
-      ? 'https://api.openai.com/v1/chat/completions'
-      : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+    let apiUrl, headers, body;
     
-    const headers = provider === 'openai'
-      ? {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
-      : {
-          'Content-Type': 'application/json'
-        };
-    
-    const body = provider === 'openai'
-      ? {
-          model: model,
-          messages: messages,
+    if (provider === 'openai') {
+      apiUrl = 'https://api.openai.com/v1/chat/completions';
+      headers = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      };
+      body = {
+        model: model,
+        messages: messages,
+        temperature: 0.3,
+        max_tokens: 4000
+      };
+    } else if (provider === 'gemini') {
+      apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      headers = {
+        'Content-Type': 'application/json'
+      };
+      body = {
+        contents: messages.slice(1).map(msg => ({
+          role: msg.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: msg.content }]
+        })),
+        generationConfig: {
           temperature: 0.3,
-          max_tokens: 4000
+          maxOutputTokens: 4000
         }
-      : {
-          contents: messages.slice(1).map(msg => ({
-            role: msg.role === 'assistant' ? 'model' : 'user',
-            parts: [{ text: msg.content }]
-          })),
-          generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 4000
-          }
-        };
+      };
+    } else if (provider === 'openrouter') {
+      apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+      headers = {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://lieblocker.extension',
+        'X-Title': 'LieBlocker Extension'
+      };
+      body = {
+        model: model,
+        messages: messages,
+        temperature: 0.3,
+        max_tokens: 4000
+      };
+    } else {
+      throw new Error(`Unsupported AI provider: ${provider}`);
+    }
     
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -814,7 +832,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
     
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      throw new Error(`AI API error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
+      throw new Error(`${provider} API error: ${response.status} - ${errorData.error?.message || 'Unknown error'}`);
     }
     
     return await response.json();
@@ -889,16 +907,33 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       chrome.storage.local.get([
         'aiProvider',
         'aiModel',
+        'openaiModel',
+        'geminiModel',
+        'openrouterModel',
         'apiKey', // Fallback for existing users
         'analysisDuration',
         'minConfidenceThreshold'
       ], resolve);
     });
     
+    // Determine the correct model based on provider
+    let aiModel;
+    const aiProvider = result.aiProvider || 'openai';
+    
+    if (aiProvider === 'openai') {
+      aiModel = result.openaiModel || 'gpt-4o-mini';
+    } else if (aiProvider === 'gemini') {
+      aiModel = result.geminiModel || 'gemini-2.0-flash-exp';
+    } else if (aiProvider === 'openrouter') {
+      aiModel = result.openrouterModel || 'meta-llama/llama-3.2-3b-instruct:free';
+    } else {
+      aiModel = result.aiModel || 'gpt-4o-mini';
+    }
+    
     // Merge with priority to secure storage
     const settings = {
-      aiProvider: result.aiProvider || 'openai',
-      aiModel: result.aiModel || 'gpt-4o-mini',
+      aiProvider: aiProvider,
+      aiModel: aiModel,
       apiKey: secureSettings.apiKey || result.apiKey || '',
       analysisDuration: result.analysisDuration || 60, // Default to 60 minutes
       minConfidenceThreshold: result.minConfidenceThreshold || 0 // Default to 0%
