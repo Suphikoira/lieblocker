@@ -614,6 +614,12 @@
       height: fit-content;
     }
     
+    .lie-severity-badge.critical {
+      background: #fef2f2;
+      color: #dc2626;
+      border: 1px solid #fecaca;
+    }
+    
     .lie-severity-badge.high {
       background: #fef2f2;
       color: #dc2626;
@@ -733,6 +739,11 @@
       font-size: 10px;
     }
     
+    .lie-severity.critical {
+      background: #ea4335;
+      color: white;
+    }
+    
     .lie-severity.high {
       background: #ea4335;
       color: white;
@@ -809,6 +820,61 @@
       font-weight: 500;
       pointer-events: none;
       z-index: 10;
+    }
+
+    /* Severity checkboxes styles */
+    .severity-checkboxes {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .severity-checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #f8f9fa;
+      border-radius: 6px;
+      border: 1px solid #e8eaed;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .severity-checkbox:hover {
+      background: #e8f0fe;
+      border-color: #4285f4;
+    }
+
+    .severity-checkbox input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+      padding: 0;
+    }
+
+    .severity-checkbox label {
+      margin: 0;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      flex: 1;
+    }
+
+    .severity-checkbox.critical label {
+      color: #dc2626;
+    }
+
+    .severity-checkbox.high label {
+      color: #dc2626;
+    }
+
+    .severity-checkbox.medium label {
+      color: #f59e0b;
+    }
+
+    .severity-checkbox.low label {
+      color: #eab308;
     }
 
     /* Responsive design for timestamp badges */
@@ -964,7 +1030,7 @@
           </div>
         </div>
         
-        <!-- General Settings -->
+        <!-- Analysis Settings -->
         <div class="setting-card">
           <div class="section-header">
             <span class="section-icon">⚙️</span>
@@ -978,7 +1044,49 @@
               <div class="duration-display" id="duration-display">20 min</div>
             </div>
             <div class="setting-description">
-              Set how many minutes of the video to analyze. Longer durations provide more comprehensive results but take more time and may cost more. Only lies with 85%+ confidence are shown.
+              Set how many minutes of the video to analyze. Longer durations provide more comprehensive results but take more time and may cost more.
+            </div>
+          </div>
+
+          <div class="setting">
+            <label for="min-confidence-threshold">Minimum Confidence Threshold</label>
+            <div class="duration-setting">
+              <input type="range" id="min-confidence-threshold" class="duration-input" min="0" max="100" value="50" step="5">
+              <div class="duration-display" id="confidence-display">50%</div>
+            </div>
+            <div class="setting-description">
+              Set the minimum confidence level required to flag a lie. Lower values will detect more potential lies but may include false positives. Higher values are more strict but may miss some lies.
+            </div>
+          </div>
+        </div>
+
+        <!-- Displayed Lie Severities -->
+        <div class="setting-card">
+          <div class="section-header">
+            <span class="section-icon">🎯</span>
+            <span>Displayed Lie Severities</span>
+          </div>
+          
+          <div class="setting-description">
+            Choose which severity levels of lies to display in the "Lies" tab. You can filter results based on how serious the detected lies are.
+          </div>
+          
+          <div class="severity-checkboxes">
+            <div class="severity-checkbox critical">
+              <input type="checkbox" id="severity-critical" value="critical" checked>
+              <label for="severity-critical">Critical</label>
+            </div>
+            <div class="severity-checkbox high">
+              <input type="checkbox" id="severity-high" value="high" checked>
+              <label for="severity-high">High</label>
+            </div>
+            <div class="severity-checkbox medium">
+              <input type="checkbox" id="severity-medium" value="medium" checked>
+              <label for="severity-medium">Medium</label>
+            </div>
+            <div class="severity-checkbox low">
+              <input type="checkbox" id="severity-low" value="low" checked>
+              <label for="severity-low">Low</label>
             </div>
           </div>
         </div>

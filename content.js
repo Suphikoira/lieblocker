@@ -262,7 +262,7 @@
         message: 'Analyzing transcript for lies...'
       });
       
-      const analysisResults = await analyzeTranscriptWithAI(transcript, videoData);
+      const analysisResults = await analyzeTranscriptWithAI(transcript, videoData, settings);
       
       // Store results
       await storeAnalysisResults(videoId, videoData, analysisResults);
@@ -674,18 +674,16 @@
     };
   }
   
-  async function analyzeTranscriptWithAI(transcript, videoData) {
-    // Get settings from secure storage
-    const settings = await getSettings();
-    
+  async function analyzeTranscriptWithAI(transcript, videoData, settings) {
     if (!settings.apiKey) {
       throw new Error('AI API key not configured');
     }
     
     const analysisDuration = settings.analysisDuration || 20;
+    const minConfidenceThreshold = (settings.minConfidenceThreshold || 50) / 100; // Convert percentage to decimal
     
-    // Build the system prompt
-    const systemPrompt = buildSystemPrompt(analysisDuration);
+    // Build the system prompt with configurable confidence threshold
+    const systemPrompt = buildSystemPrompt(analysisDuration, minConfidenceThreshold);
     
     // Prepare the transcript for analysis (limit to analysis duration)
     const limitedTranscript = limitTranscriptByDuration(transcript, analysisDuration);
@@ -710,20 +708,29 @@
     return {
       lies: analysisResult.claims || [],
       totalLies: (analysisResult.claims || []).length,
-      analysisDuration: analysisDuration
+      analysisDuration: analysisDuration,
+      minConfidenceThreshold: minConfidenceThreshold
     };
   }
   
-  function buildSystemPrompt(analysisDuration) {
+  function buildSystemPrompt(analysisDuration, minConfidenceThreshold) {
+    const confidencePercentage = Math.round(minConfidenceThreshold * 100);
+    
     return `You are a fact-checking expert. Analyze this ${analysisDuration}-minute YouTube transcript and identify false or misleading claims.
 
 DETECTION CRITERIA:
 - Only flag factual claims, not opinions or predictions
-- Require very high confidence (90%+) before flagging
+- Require confidence of ${confidencePercentage}%+ before flagging
 - Focus on clear, verifiable false claims with strong evidence
 - Be specific about what makes each claim problematic
 - Consider context and intent
 - Err on the side of caution to avoid false positives
+
+SEVERITY LEVELS:
+- "critical": Dangerous misinformation that could cause harm
+- "high": Clearly false factual claims with strong evidence against them
+- "medium": Misleading or questionable claims with some evidence against them
+- "low": Minor inaccuracies or claims that lack sufficient evidence
 
 RESPONSE FORMAT:
 Respond with a JSON object containing an array of claims. Each claim should have:
@@ -732,7 +739,7 @@ Respond with a JSON object containing an array of claims. Each claim should have
 - "duration": Estimated duration of the lie in seconds (5-30, based on actual complexity)
 - "claim": The specific false or misleading statement (exact quote from transcript)
 - "explanation": Why this claim is problematic (1-2 sentences)
-- "confidence": Your confidence level (0.0-1.0)
+- "confidence": Your confidence level (0.0-1.0, minimum ${minConfidenceThreshold})
 - "severity": "low", "medium", "high", or "critical"
 
 Example response:
@@ -883,7 +890,8 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
         'aiProvider',
         'aiModel',
         'apiKey', // Fallback for existing users
-        'analysisDuration'
+        'analysisDuration',
+        'minConfidenceThreshold'
       ], resolve);
     });
     
@@ -892,7 +900,8 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       aiProvider: result.aiProvider || 'openai',
       aiModel: result.aiModel || 'gpt-4o-mini',
       apiKey: secureSettings.apiKey || result.apiKey || '',
-      analysisDuration: result.analysisDuration || 20
+      analysisDuration: result.analysisDuration || 20,
+      minConfidenceThreshold: result.minConfidenceThreshold || 50
     };
     
     return settings;

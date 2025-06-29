@@ -152,6 +152,13 @@
       durationSlider.addEventListener('input', updateDurationDisplay);
       durationSlider.addEventListener('change', saveSettingsSecurely);
     }
+
+    // Confidence threshold
+    const confidenceSlider = document.getElementById('min-confidence-threshold');
+    if (confidenceSlider) {
+      confidenceSlider.addEventListener('input', updateConfidenceDisplay);
+      confidenceSlider.addEventListener('change', saveSettingsSecurely);
+    }
     
     // Model selects
     const openaiModelSelect = document.getElementById('openai-model');
@@ -164,6 +171,12 @@
     if (geminiModelSelect) {
       geminiModelSelect.addEventListener('change', saveSettingsSecurely);
     }
+
+    // Severity checkboxes
+    const severityCheckboxes = document.querySelectorAll('.severity-checkboxes input[type="checkbox"]');
+    severityCheckboxes.forEach(checkbox => {
+      checkbox.addEventListener('change', handleSeverityChange);
+    });
     
     // Clear cache button
     const clearCacheBtn = document.getElementById('clear-cache');
@@ -480,6 +493,8 @@
         'geminiModel',
         'apiKey', // Fallback for existing users
         'analysisDuration',
+        'minConfidenceThreshold',
+        'selectedSeverities',
         'skipLiesEnabled'
       ]);
       
@@ -563,6 +578,20 @@
         durationSlider.value = settings.analysisDuration || 20;
         updateDurationDisplay();
       }
+
+      // Confidence Threshold
+      const confidenceSlider = document.getElementById('min-confidence-threshold');
+      if (confidenceSlider) {
+        confidenceSlider.value = settings.minConfidenceThreshold || 50;
+        updateConfidenceDisplay();
+      }
+
+      // Selected Severities
+      const selectedSeverities = settings.selectedSeverities || ['critical', 'high', 'medium', 'low'];
+      const severityCheckboxes = document.querySelectorAll('.severity-checkboxes input[type="checkbox"]');
+      severityCheckboxes.forEach(checkbox => {
+        checkbox.checked = selectedSeverities.includes(checkbox.value);
+      });
       
       // Skip Lies Toggle
       const skipToggle = document.getElementById('skip-lies-toggle');
@@ -610,6 +639,28 @@
       display.textContent = `${value} min`;
     }
   }
+
+  function updateConfidenceDisplay() {
+    const slider = document.getElementById('min-confidence-threshold');
+    const display = document.getElementById('confidence-display');
+    
+    if (slider && display) {
+      const value = slider.value;
+      display.textContent = `${value}%`;
+    }
+  }
+
+  async function handleSeverityChange() {
+    // Get all checked severities
+    const checkboxes = document.querySelectorAll('.severity-checkboxes input[type="checkbox"]:checked');
+    const selectedSeverities = Array.from(checkboxes).map(cb => cb.value);
+    
+    // Save to storage
+    await chrome.storage.local.set({ selectedSeverities });
+    
+    // Update lies list immediately
+    updateLiesList();
+  }
   
   async function saveSettingsSecurely(silent = false) {
     try {
@@ -619,12 +670,18 @@
       const apiKeyInput = document.getElementById('api-key');
       const currentApiKey = apiKeyInput?.value || '';
       
+      // Get selected severities
+      const checkboxes = document.querySelectorAll('.severity-checkboxes input[type="checkbox"]:checked');
+      const selectedSeverities = Array.from(checkboxes).map(cb => cb.value);
+      
       // Prepare regular settings (non-sensitive)
       const regularSettings = {
         aiProvider: document.getElementById('ai-provider')?.value || 'openai',
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
         analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 20,
+        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 50,
+        selectedSeverities: selectedSeverities,
         skipLiesEnabled: document.getElementById('skip-lies-toggle')?.classList.contains('active') || false
       };
       
@@ -810,62 +867,84 @@
     const noLiesMessage = document.getElementById('no-lies-message');
     
     if (!liesList || !noLiesMessage) return;
-    
-    if (currentVideoLies.length === 0) {
-      liesList.style.display = 'none';
-      noLiesMessage.style.display = 'block';
-      return;
-    }
-    
-    liesList.style.display = 'block';
-    noLiesMessage.style.display = 'none';
-    
-    // Sort lies by timestamp
-    const sortedLies = [...currentVideoLies].sort((a, b) => 
-      (a.timestamp_seconds || 0) - (b.timestamp_seconds || 0)
-    );
-    
-    liesList.innerHTML = sortedLies.map((lie, index) => {
-      const timestamp = formatTimestamp(lie.timestamp_seconds || 0);
-      const duration = lie.duration_seconds || 10;
+
+    // Get selected severities from storage
+    chrome.storage.local.get(['selectedSeverities'], (result) => {
+      const selectedSeverities = result.selectedSeverities || ['critical', 'high', 'medium', 'low'];
       
-      return `
-        <div class="lie-item clickable-lie-item" data-timestamp="${lie.timestamp_seconds || 0}">
-          <div class="lie-timestamp-badge">
-            <span class="timestamp-icon">⏰</span>
-            <span class="timestamp-value">${timestamp}</span>
-            <div class="duration-info">${duration}s</div>
-          </div>
-          
-          <div class="lie-text">
-            <span class="lie-number">#${index + 1}</span>
-            ${lie.claim_text || 'No claim text available'}
-          </div>
-          
-          <div class="lie-explanation">
-            ${lie.explanation || 'No explanation available'}
-          </div>
-          
-          <div class="lie-meta">
-            <span class="lie-confidence">
-              Confidence: ${Math.round((lie.confidence || 0) * 100)}%
-            </span>
-            <span class="lie-severity-badge ${lie.severity || 'medium'}">
-              ${lie.severity || 'medium'}
-            </span>
-          </div>
-        </div>
-      `;
-    }).join('');
-    
-    // Add click handlers for timestamp jumping
-    const lieItems = liesList.querySelectorAll('.clickable-lie-item');
-    lieItems.forEach(item => {
-      item.addEventListener('click', async () => {
-        const timestamp = parseInt(item.dataset.timestamp);
-        if (timestamp >= 0) {
-          await jumpToTimestamp(timestamp);
+      // Filter lies by selected severities
+      const filteredLies = currentVideoLies.filter(lie => 
+        selectedSeverities.includes(lie.severity || 'medium')
+      );
+      
+      if (filteredLies.length === 0) {
+        liesList.style.display = 'none';
+        noLiesMessage.style.display = 'block';
+        
+        // Update lies count to show filtered count
+        const liesCountEl = document.getElementById('lies-count');
+        if (liesCountEl) {
+          liesCountEl.textContent = filteredLies.length;
         }
+        return;
+      }
+      
+      liesList.style.display = 'block';
+      noLiesMessage.style.display = 'none';
+      
+      // Update lies count to show filtered count
+      const liesCountEl = document.getElementById('lies-count');
+      if (liesCountEl) {
+        liesCountEl.textContent = filteredLies.length;
+      }
+      
+      // Sort lies by timestamp
+      const sortedLies = [...filteredLies].sort((a, b) => 
+        (a.timestamp_seconds || 0) - (b.timestamp_seconds || 0)
+      );
+      
+      liesList.innerHTML = sortedLies.map((lie, index) => {
+        const timestamp = formatTimestamp(lie.timestamp_seconds || 0);
+        const duration = lie.duration_seconds || 10;
+        
+        return `
+          <div class="lie-item clickable-lie-item" data-timestamp="${lie.timestamp_seconds || 0}">
+            <div class="lie-timestamp-badge">
+              <span class="timestamp-icon">⏰</span>
+              <span class="timestamp-value">${timestamp}</span>
+              <div class="duration-info">${duration}s</div>
+            </div>
+            
+            <div class="lie-text">
+              <span class="lie-number">#${index + 1}</span>
+              ${lie.claim_text || 'No claim text available'}
+            </div>
+            
+            <div class="lie-explanation">
+              ${lie.explanation || 'No explanation available'}
+            </div>
+            
+            <div class="lie-meta">
+              <span class="lie-confidence">
+                Confidence: ${Math.round((lie.confidence || 0) * 100)}%
+              </span>
+              <span class="lie-severity-badge ${lie.severity || 'medium'}">
+                ${lie.severity || 'medium'}
+              </span>
+            </div>
+          </div>
+        `;
+      }).join('');
+      
+      // Add click handlers for timestamp jumping
+      const lieItems = liesList.querySelectorAll('.clickable-lie-item');
+      lieItems.forEach(item => {
+        item.addEventListener('click', async () => {
+          const timestamp = parseInt(item.dataset.timestamp);
+          if (timestamp >= 0) {
+            await jumpToTimestamp(timestamp);
+          }
+        });
       });
     });
   }
@@ -992,6 +1071,8 @@
         'openaiModel', 
         'geminiModel',
         'analysisDuration',
+        'minConfidenceThreshold',
+        'selectedSeverities',
         'skipLiesEnabled'
       ]);
       
