@@ -854,8 +854,12 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
         throw new Error('Unexpected AI response format');
       }
       
-      // Clean up the content (remove markdown code blocks if present)
-      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      console.log('🔍 Raw AI response content:', content);
+      
+      // Enhanced content cleaning and extraction
+      content = cleanAndExtractJSON(content);
+      
+      console.log('🧹 Cleaned content for parsing:', content);
       
       // Parse JSON
       const parsed = JSON.parse(content);
@@ -871,11 +875,84 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
         }));
       }
       
+      console.log('✅ Successfully parsed AI response:', parsed);
       return parsed;
     } catch (error) {
       console.error('❌ Failed to parse AI response:', error);
+      console.error('❌ Raw response:', response);
+      
+      // Try to extract any JSON-like content as fallback
+      try {
+        const fallbackResult = extractFallbackJSON(response);
+        if (fallbackResult) {
+          console.log('🔄 Using fallback JSON extraction:', fallbackResult);
+          return fallbackResult;
+        }
+      } catch (fallbackError) {
+        console.error('❌ Fallback parsing also failed:', fallbackError);
+      }
+      
       return { claims: [] };
     }
+  }
+  
+  function cleanAndExtractJSON(content) {
+    if (!content || typeof content !== 'string') {
+      throw new Error('Invalid content type');
+    }
+    
+    // Remove common markdown formatting
+    content = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    
+    // Remove any leading/trailing text that's not JSON
+    const jsonStart = content.indexOf('{');
+    const jsonEnd = content.lastIndexOf('}');
+    
+    if (jsonStart === -1 || jsonEnd === -1 || jsonStart >= jsonEnd) {
+      throw new Error('No valid JSON structure found');
+    }
+    
+    content = content.substring(jsonStart, jsonEnd + 1);
+    
+    // Fix common JSON formatting issues
+    content = content
+      // Fix unescaped quotes in strings
+      .replace(/([^\\])"([^"]*)"([^,}\]:])/g, '$1\\"$2\\"$3')
+      // Fix trailing commas
+      .replace(/,(\s*[}\]])/g, '$1')
+      // Fix missing commas between objects
+      .replace(/}(\s*){/g, '},\n$1{')
+      // Fix missing commas between array items
+      .replace(/](\s*)\[/g, '],\n$1[');
+    
+    return content;
+  }
+  
+  function extractFallbackJSON(response) {
+    // Try to extract any claims data from the response
+    let content = '';
+    
+    if (response.choices && response.choices[0]) {
+      content = response.choices[0].message.content;
+    } else if (response.candidates && response.candidates[0]) {
+      content = response.candidates[0].content.parts[0].text;
+    } else {
+      return null;
+    }
+    
+    // Look for any mention of claims or lies
+    const claimsMatch = content.match(/claims?\s*[:=]\s*\[([^\]]*)\]/i);
+    if (claimsMatch) {
+      try {
+        const claimsArray = JSON.parse('[' + claimsMatch[1] + ']');
+        return { claims: claimsArray };
+      } catch (e) {
+        // Continue to other fallback methods
+      }
+    }
+    
+    // If no structured data found, return empty result
+    return { claims: [] };
   }
   
   function parseTimestamp(timestamp) {
