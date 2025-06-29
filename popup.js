@@ -198,6 +198,9 @@
           // Save settings immediately when model changes
           saveSettingsSecurely(true); // Silent save
         });
+        console.log(`✅ Event listener added for ${id}`);
+      } else {
+        console.warn(`⚠️ Could not find element with id: ${id}`);
       }
     });
   }

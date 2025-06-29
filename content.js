@@ -17,9 +17,6 @@
   let videoPlayer = null;
   let skipNotificationTimeout = null;
   let securityService = null;
-  let autoSkipInterval = null;
-  let lastSkippedLie = null;
-  let skipCheckActive = false;
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
@@ -87,21 +84,12 @@
       console.log('📹 New video detected:', videoId);
       currentVideoId = videoId;
       currentLies = [];
-      lastSkippedLie = null;
-      
-      // Clear any existing auto-skip interval
-      cleanupAutoSkip();
       
       // Get video player reference
       videoPlayer = document.querySelector('video');
       
       // Load lies for this video from background storage
       loadCurrentVideoLies(videoId);
-      
-      // Set up auto-skip if enabled
-      if (skipLiesEnabled) {
-        setupAutoSkip();
-      }
     }
   }
   
@@ -123,13 +111,11 @@
           handleAnalyzeVideo(sendResponse);
           return true; // Keep message channel open
         } else if (message.type === 'skipLiesToggle') {
-          handleSkipLiesToggle(message.enabled);
+          skipLiesEnabled = message.enabled;
+          console.log('⏭️ Skip lies toggled:', skipLiesEnabled);
           sendResponse({ success: true });
         } else if (message.type === 'jumpToTimestamp') {
           jumpToTimestamp(message.timestamp);
-          sendResponse({ success: true });
-        } else if (message.type === 'liesUpdate') {
-          handleLiesUpdate(message);
           sendResponse({ success: true });
         } else {
           sendResponse({ success: true, message: 'Message received' });
@@ -139,32 +125,6 @@
         sendResponse({ success: false, error: error.message });
       }
     });
-  }
-  
-  function handleSkipLiesToggle(enabled) {
-    skipLiesEnabled = enabled;
-    console.log('⏭️ Skip lies toggled:', skipLiesEnabled);
-    
-    // Save setting
-    chrome.storage.local.set({ skipLiesEnabled: enabled });
-    
-    if (enabled && currentLies.length > 0) {
-      setupAutoSkip();
-    } else if (!enabled) {
-      cleanupAutoSkip();
-    }
-  }
-  
-  function handleLiesUpdate(message) {
-    if (message.videoId === currentVideoId && message.claims) {
-      currentLies = message.claims;
-      console.log('📋 Updated current video lies:', currentLies.length);
-      
-      // Set up auto-skip if enabled
-      if (skipLiesEnabled && currentLies.length > 0) {
-        setupAutoSkip();
-      }
-    }
   }
   
   async function handleAnalyzeVideo(sendResponse) {
@@ -262,7 +222,7 @@
         message: 'Analyzing transcript for lies...'
       });
       
-      const analysisResults = await analyzeTranscriptWithAI(transcript, videoData, settings);
+      const analysisResults = await analyzeTranscriptWithAI(transcript, videoData);
       
       // Store results
       await storeAnalysisResults(videoId, videoData, analysisResults);
@@ -308,7 +268,7 @@
       case 'gemini':
         return apiKey.length > 20; // Basic length check for Gemini
       case 'openrouter':
-        return apiKey.startsWith('sk-or-') && apiKey.length > 20; // OpenRouter keys start with sk-or-
+        return apiKey.startsWith('sk-or-') && apiKey.length > 20;
       default:
         return false;
     }
@@ -676,15 +636,18 @@
     };
   }
   
-  async function analyzeTranscriptWithAI(transcript, videoData, settings) {
+  async function analyzeTranscriptWithAI(transcript, videoData) {
+    // Get settings from secure storage
+    const settings = await getSettings();
+    
     if (!settings.apiKey) {
       throw new Error('AI API key not configured');
     }
     
-    const analysisDuration = settings.analysisDuration || 60; // Default to 60 minutes
-    const minConfidenceThreshold = (settings.minConfidenceThreshold || 0) / 100; // Convert percentage to decimal, default to 0%
+    const analysisDuration = settings.analysisDuration || 60;
+    const minConfidenceThreshold = settings.minConfidenceThreshold || 0;
     
-    // Build the system prompt with configurable confidence threshold
+    // Build the system prompt
     const systemPrompt = buildSystemPrompt(analysisDuration, minConfidenceThreshold);
     
     // Prepare the transcript for analysis (limit to analysis duration)
@@ -701,38 +664,34 @@
       }
     ];
     
-    // Make API call with retry logic for incomplete responses
-    const response = await makeAIAPICallWithRetry(settings.aiProvider, settings.aiModel, messages, settings.apiKey);
+    // Make API call
+    const response = await makeAIAPICall(settings.aiProvider, settings.aiModel, messages, settings.apiKey);
     
     // Parse response
     const analysisResult = parseAIResponse(response);
     
+    // Filter by confidence threshold
+    const filteredLies = (analysisResult.claims || []).filter(claim => 
+      (claim.confidence || 0) >= (minConfidenceThreshold / 100)
+    );
+    
     return {
-      lies: analysisResult.claims || [],
-      totalLies: (analysisResult.claims || []).length,
-      analysisDuration: analysisDuration,
-      minConfidenceThreshold: minConfidenceThreshold
+      lies: filteredLies,
+      totalLies: filteredLies.length,
+      analysisDuration: analysisDuration
     };
   }
   
   function buildSystemPrompt(analysisDuration, minConfidenceThreshold) {
-    const confidencePercentage = Math.round(minConfidenceThreshold * 100);
-    
     return `You are a fact-checking expert. Analyze this ${analysisDuration}-minute YouTube transcript and identify false or misleading claims.
 
 DETECTION CRITERIA:
 - Only flag factual claims, not opinions or predictions
-- Require confidence of ${confidencePercentage}%+ before flagging
+- Require very high confidence (${Math.max(90, minConfidenceThreshold)}%+) before flagging
 - Focus on clear, verifiable false claims with strong evidence
 - Be specific about what makes each claim problematic
 - Consider context and intent
 - Err on the side of caution to avoid false positives
-
-SEVERITY LEVELS:
-- "critical": Dangerous misinformation that could cause harm
-- "high": Clearly false factual claims with strong evidence against them
-- "medium": Misleading or questionable claims with some evidence against them
-- "low": Minor inaccuracies or claims that lack sufficient evidence
 
 RESPONSE FORMAT:
 Respond with a JSON object containing an array of claims. Each claim should have:
@@ -741,7 +700,7 @@ Respond with a JSON object containing an array of claims. Each claim should have
 - "duration": Estimated duration of the lie in seconds (5-30, based on actual complexity)
 - "claim": The specific false or misleading statement (exact quote from transcript)
 - "explanation": Why this claim is problematic (1-2 sentences)
-- "confidence": Your confidence level (0.0-1.0, minimum ${minConfidenceThreshold})
+- "confidence": Your confidence level (0.0-1.0)
 - "severity": "low", "medium", "high", or "critical"
 
 Example response:
@@ -759,10 +718,7 @@ Example response:
   ]
 }
 
-IMPORTANT: 
-1. Only return the JSON object. Do not include any other text.
-2. Ensure the JSON is complete and properly formatted.
-3. If you cannot complete the full response, return {"claims": []} instead of incomplete JSON.`;
+IMPORTANT: Only return the JSON object. Do not include any other text.`;
   }
   
   function limitTranscriptByDuration(transcript, durationMinutes) {
@@ -779,101 +735,6 @@ IMPORTANT:
     return words.slice(0, targetWords).join(' ') + '...';
   }
   
-  async function makeAIAPICallWithRetry(provider, model, messages, apiKey, maxRetries = 3) {
-    let lastError = null;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        console.log(`🔄 AI API call attempt ${attempt}/${maxRetries}`);
-        
-        const response = await makeAIAPICall(provider, model, messages, apiKey);
-        
-        // Check if response is complete
-        if (isResponseComplete(response)) {
-          console.log('✅ Complete AI response received');
-          return response;
-        } else {
-          console.warn(`⚠️ Incomplete response on attempt ${attempt}, retrying...`);
-          lastError = new Error('Incomplete AI response received');
-          
-          // Wait before retrying (exponential backoff)
-          if (attempt < maxRetries) {
-            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-            await new Promise(resolve => setTimeout(resolve, delay));
-          }
-        }
-      } catch (error) {
-        console.error(`❌ AI API call attempt ${attempt} failed:`, error);
-        lastError = error;
-        
-        // Wait before retrying (exponential backoff)
-        if (attempt < maxRetries) {
-          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 5000);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
-    
-    // If all retries failed, throw the last error
-    throw lastError || new Error('All AI API call attempts failed');
-  }
-  
-  function isResponseComplete(response) {
-    try {
-      let content = '';
-      
-      // Extract content based on provider format
-      if (response.choices && response.choices[0]) {
-        content = response.choices[0].message.content;
-      } else if (response.candidates && response.candidates[0]) {
-        content = response.candidates[0].content.parts[0].text;
-      } else {
-        return false;
-      }
-      
-      if (!content || typeof content !== 'string') {
-        return false;
-      }
-      
-      // Check for incomplete JSON patterns
-      const trimmedContent = content.trim();
-      
-      // Must start with { and end with }
-      if (!trimmedContent.startsWith('{') || !trimmedContent.endsWith('}')) {
-        console.warn('⚠️ Response does not have proper JSON boundaries');
-        return false;
-      }
-      
-      // Check for incomplete JSON patterns
-      const incompletePatterns = [
-        /{\s*"claims":\s*$/,  // Ends with "claims": 
-        /{\s*"claims":\s*\[?\s*$/,  // Ends with "claims": [
-        /,\s*$/,  // Ends with comma
-        /:\s*$/,  // Ends with colon
-        /"\s*$/   // Ends with quote
-      ];
-      
-      for (const pattern of incompletePatterns) {
-        if (pattern.test(trimmedContent)) {
-          console.warn('⚠️ Response matches incomplete pattern:', pattern);
-          return false;
-        }
-      }
-      
-      // Try to parse as JSON to verify completeness
-      try {
-        JSON.parse(trimmedContent);
-        return true;
-      } catch (parseError) {
-        console.warn('⚠️ Response is not valid JSON:', parseError.message);
-        return false;
-      }
-    } catch (error) {
-      console.error('❌ Error checking response completeness:', error);
-      return false;
-    }
-  }
-  
   async function makeAIAPICall(provider, model, messages, apiKey) {
     let apiUrl, headers, body;
     
@@ -886,7 +747,7 @@ IMPORTANT:
       body = {
         model: model,
         messages: messages,
-        temperature: 0.1, // Lower temperature for more consistent JSON
+        temperature: 0.3,
         max_tokens: 4000
       };
     } else if (provider === 'gemini') {
@@ -900,7 +761,7 @@ IMPORTANT:
           parts: [{ text: msg.content }]
         })),
         generationConfig: {
-          temperature: 0.1, // Lower temperature for more consistent JSON
+          temperature: 0.3,
           maxOutputTokens: 4000
         }
       };
@@ -909,18 +770,14 @@ IMPORTANT:
       headers = {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://lieblocker.extension',
-        'X-Title': 'LieBlocker Extension'
+        'HTTP-Referer': 'https://lieblocker.com',
+        'X-Title': 'LieBlocker'
       };
       body = {
         model: model,
         messages: messages,
-        temperature: 0.1, // Lower temperature for more consistent JSON
-        max_tokens: 4000,
-        // Add specific parameters for better completion
-        top_p: 0.9,
-        frequency_penalty: 0,
-        presence_penalty: 0
+        temperature: 0.3,
+        max_tokens: 4000
       };
     } else {
       throw new Error(`Unsupported AI provider: ${provider}`);
@@ -956,12 +813,27 @@ IMPORTANT:
         throw new Error('Unexpected AI response format');
       }
       
-      console.log('🔍 Raw AI response content:', content);
+      // Clean up the content (remove markdown code blocks if present)
+      content = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       
-      // Enhanced content cleaning and extraction
-      content = cleanAndExtractJSON(content);
-      
-      console.log('🧹 Cleaned content for parsing:', content);
+      // Handle incomplete JSON responses (common with free models)
+      if (!content.endsWith('}')) {
+        // Try to find the last complete claim
+        const lastCompleteClaimIndex = content.lastIndexOf('}');
+        if (lastCompleteClaimIndex > 0) {
+          // Find the start of the claims array
+          const claimsStartIndex = content.indexOf('"claims": [');
+          if (claimsStartIndex > 0) {
+            // Reconstruct the JSON with complete claims only
+            const beforeClaims = content.substring(0, claimsStartIndex + '"claims": ['.length);
+            const claimsSection = content.substring(claimsStartIndex + '"claims": ['.length, lastCompleteClaimIndex + 1);
+            content = beforeClaims + claimsSection + ']}';
+          }
+        } else {
+          // No complete claims found, return empty
+          content = '{"claims": []}';
+        }
+      }
       
       // Parse JSON
       const parsed = JSON.parse(content);
@@ -977,103 +849,12 @@ IMPORTANT:
         }));
       }
       
-      console.log('✅ Successfully parsed AI response:', parsed);
       return parsed;
     } catch (error) {
       console.error('❌ Failed to parse AI response:', error);
-      console.error('❌ Raw response:', response);
-      
-      // Try to extract any JSON-like content as fallback
-      try {
-        const fallbackResult = extractFallbackJSON(response);
-        if (fallbackResult) {
-          console.log('🔄 Using fallback JSON extraction:', fallbackResult);
-          return fallbackResult;
-        }
-      } catch (fallbackError) {
-        console.error('❌ Fallback parsing also failed:', fallbackError);
-      }
-      
+      console.log('Raw response:', response);
       return { claims: [] };
     }
-  }
-  
-  function cleanAndExtractJSON(content) {
-    if (!content || typeof content !== 'string') {
-      throw new Error('Invalid content type');
-    }
-    
-    // Remove common markdown formatting
-    content = content.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
-    
-    // Remove any leading/trailing text that's not JSON
-    const jsonStart = content.indexOf('{');
-    const jsonEnd = content.lastIndexOf('}');
-    
-    if (jsonStart === -1 || jsonEnd === -1 || jsonStart >= jsonEnd) {
-      throw new Error('No valid JSON structure found');
-    }
-    
-    content = content.substring(jsonStart, jsonEnd + 1);
-    
-    // Check for incomplete JSON patterns and try to fix them
-    if (content.match(/{\s*"claims":\s*$/)) {
-      // Incomplete: ends with "claims":
-      content = '{"claims": []}';
-    } else if (content.match(/{\s*"claims":\s*\[\s*$/)) {
-      // Incomplete: ends with "claims": [
-      content = '{"claims": []}';
-    } else if (content.endsWith(',')) {
-      // Remove trailing comma
-      content = content.slice(0, -1);
-    }
-    
-    // Fix common JSON formatting issues
-    content = content
-      // Fix unescaped quotes in strings
-      .replace(/([^\\])"([^"]*)"([^,}\]:])/g, '$1\\"$2\\"$3')
-      // Fix trailing commas
-      .replace(/,(\s*[}\]])/g, '$1')
-      // Fix missing commas between objects
-      .replace(/}(\s*){/g, '},\n$1{')
-      // Fix missing commas between array items
-      .replace(/](\s*)\[/g, '],\n$1[');
-    
-    return content;
-  }
-  
-  function extractFallbackJSON(response) {
-    // Try to extract any claims data from the response
-    let content = '';
-    
-    if (response.choices && response.choices[0]) {
-      content = response.choices[0].message.content;
-    } else if (response.candidates && response.candidates[0]) {
-      content = response.candidates[0].content.parts[0].text;
-    } else {
-      return null;
-    }
-    
-    // If the response is incomplete, return empty claims
-    if (!content || content.trim().length < 10) {
-      console.warn('⚠️ Response too short, returning empty claims');
-      return { claims: [] };
-    }
-    
-    // Look for any mention of claims or lies
-    const claimsMatch = content.match(/claims?\s*[:=]\s*\[([^\]]*)\]/i);
-    if (claimsMatch) {
-      try {
-        const claimsArray = JSON.parse('[' + claimsMatch[1] + ']');
-        return { claims: claimsArray };
-      } catch (e) {
-        // Continue to other fallback methods
-      }
-    }
-    
-    // If no structured data found, return empty result
-    console.warn('⚠️ No valid claims data found in response, returning empty claims');
-    return { claims: [] };
   }
   
   function parseTimestamp(timestamp) {
@@ -1104,7 +885,6 @@ IMPORTANT:
     const result = await new Promise((resolve) => {
       chrome.storage.local.get([
         'aiProvider',
-        'aiModel',
         'openaiModel',
         'geminiModel',
         'openrouterModel',
@@ -1114,28 +894,22 @@ IMPORTANT:
       ], resolve);
     });
     
-    // Determine the correct model based on provider
-    let aiModel;
-    const aiProvider = result.aiProvider || 'openai';
-    
-    if (aiProvider === 'openai') {
-      aiModel = result.openaiModel || 'gpt-4o-mini';
-    } else if (aiProvider === 'gemini') {
-      aiModel = result.geminiModel || 'gemini-2.0-flash-exp';
-    } else if (aiProvider === 'openrouter') {
-      aiModel = result.openrouterModel || 'meta-llama/llama-4-maverick-17b-128e-instruct:free';
-    } else {
-      aiModel = result.aiModel || 'gpt-4o-mini';
-    }
-    
     // Merge with priority to secure storage
     const settings = {
-      aiProvider: aiProvider,
-      aiModel: aiModel,
+      aiProvider: result.aiProvider || 'openai',
       apiKey: secureSettings.apiKey || result.apiKey || '',
-      analysisDuration: result.analysisDuration || 60, // Default to 60 minutes
-      minConfidenceThreshold: result.minConfidenceThreshold || 0 // Default to 0%
+      analysisDuration: result.analysisDuration || 60,
+      minConfidenceThreshold: result.minConfidenceThreshold || 0
     };
+    
+    // Set the correct model based on provider
+    if (settings.aiProvider === 'openai') {
+      settings.aiModel = result.openaiModel || 'gpt-4o-mini';
+    } else if (settings.aiProvider === 'gemini') {
+      settings.aiModel = result.geminiModel || 'gemini-2.0-flash-exp';
+    } else if (settings.aiProvider === 'openrouter') {
+      settings.aiModel = result.openrouterModel || 'meta-llama/llama-4-maverick-17b-128e-instruct:free';
+    }
     
     return settings;
   }
@@ -1232,11 +1006,6 @@ IMPORTANT:
       if (response && response.success && response.lies) {
         currentLies = response.lies;
         console.log('📋 Loaded current video lies:', currentLies.length);
-        
-        // Set up auto-skip if enabled
-        if (skipLiesEnabled && currentLies.length > 0) {
-          setupAutoSkip();
-        }
         return;
       }
       
@@ -1245,11 +1014,6 @@ IMPORTANT:
       if (cachedResults && cachedResults.lies) {
         currentLies = cachedResults.lies;
         console.log('📋 Loaded lies from cache:', currentLies.length);
-        
-        // Set up auto-skip if enabled
-        if (skipLiesEnabled && currentLies.length > 0) {
-          setupAutoSkip();
-        }
       }
       
     } catch (error) {
@@ -1277,183 +1041,107 @@ IMPORTANT:
     }
   }
   
-  // Enhanced auto-skip functionality with better reliability
+  // Auto-skip functionality
   function setupAutoSkip() {
-    // Ensure we have everything needed
-    if (!skipLiesEnabled || currentLies.length === 0) {
-      console.log('⏭️ Auto-skip setup skipped:', {
-        enabled: skipLiesEnabled,
-        liesCount: currentLies.length
-      });
+    if (!videoPlayer || !skipLiesEnabled || currentLies.length === 0) {
       return;
     }
     
-    // Get fresh video player reference
-    videoPlayer = document.querySelector('video');
-    if (!videoPlayer) {
-      console.log('⏭️ No video player found, retrying in 2 seconds...');
-      setTimeout(setupAutoSkip, 2000);
-      return;
-    }
-    
-    // Clear any existing interval
-    cleanupAutoSkip();
-    
-    console.log('⏭️ Setting up auto-skip for', currentLies.length, 'lies');
-    
-    // Set up the skip checking interval
-    autoSkipInterval = setInterval(() => {
-      if (!skipLiesEnabled || !videoPlayer || skipCheckActive) {
-        return;
-      }
+    const checkSkip = () => {
+      if (!skipLiesEnabled) return;
       
-      // Skip if video is paused or not ready
-      if (videoPlayer.paused || videoPlayer.readyState < 2) {
-        return;
-      }
+      const currentTime = videoPlayer.currentTime;
       
-      skipCheckActive = true;
-      
-      try {
-        const currentTime = videoPlayer.currentTime;
+      for (const lie of currentLies) {
+        const startTime = lie.timestamp_seconds;
+        const endTime = startTime + (lie.duration_seconds || 10);
         
-        // Find any lie that should be skipped at current time
-        for (const lie of currentLies) {
-          const startTime = lie.timestamp_seconds;
-          const endTime = startTime + (lie.duration_seconds || 10);
+        if (currentTime >= startTime && currentTime < endTime) {
+          // Skip this lie
+          videoPlayer.currentTime = endTime;
           
-          // Check if we're within the lie timeframe
-          if (currentTime >= startTime && currentTime < endTime) {
-            // Avoid skipping the same lie multiple times
-            if (lastSkippedLie && 
-                lastSkippedLie.timestamp_seconds === startTime && 
-                Date.now() - lastSkippedLie.skipTime < 3000) {
-              continue;
-            }
-            
-            // Skip this lie
-            console.log('⏭️ Skipping lie at', formatTimestamp(startTime), '-', formatTimestamp(endTime));
-            
-            // Jump to end of lie
-            videoPlayer.currentTime = endTime + 0.5; // Add small buffer
-            
-            // Track the skip
-            lastSkippedLie = {
-              ...lie,
-              skipTime: Date.now()
-            };
-            
-            // Show skip notification
-            showSkipNotification(lie);
-            
-            // Track skip for statistics
-            chrome.runtime.sendMessage({
-              type: 'lieSkipped',
-              videoId: currentVideoId,
-              timestamp: startTime,
-              duration: lie.duration_seconds || 10,
-              claim: lie.claim_text
-            });
-            
-            break; // Only skip one lie at a time
-          }
+          // Show skip notification
+          showSkipNotification(lie);
+          
+          // Track skip for statistics
+          chrome.runtime.sendMessage({
+            type: 'lieSkipped',
+            videoId: currentVideoId,
+            timestamp: startTime,
+            duration: lie.duration_seconds || 10,
+            claim: lie.claim_text
+          });
+          
+          break;
         }
-      } catch (error) {
-        console.error('❌ Error in skip check:', error);
-      } finally {
-        skipCheckActive = false;
       }
-    }, 250); // Check every 250ms for better responsiveness
+    };
     
-    console.log('✅ Auto-skip enabled with interval ID:', autoSkipInterval);
-  }
-  
-  function cleanupAutoSkip() {
-    if (autoSkipInterval) {
-      clearInterval(autoSkipInterval);
-      autoSkipInterval = null;
-      console.log('🧹 Auto-skip interval cleared');
-    }
-  }
-  
-  function formatTimestamp(seconds) {
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.floor(seconds % 60);
-    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+    // Check every 500ms when video is playing
+    const skipInterval = setInterval(() => {
+      if (videoPlayer && !videoPlayer.paused) {
+        checkSkip();
+      }
+    }, 500);
+    
+    // Clean up interval when video changes
+    const cleanup = () => {
+      clearInterval(skipInterval);
+    };
+    
+    // Store cleanup function for later use
+    window.cleanupAutoSkip = cleanup;
   }
   
   function showSkipNotification(lie) {
-    // Clear any existing notification timeout
+    // Clear any existing notification
     if (skipNotificationTimeout) {
       clearTimeout(skipNotificationTimeout);
     }
     
-    // Remove any existing notification
-    const existingNotification = document.querySelector('.lieblocker-skip-notification');
-    if (existingNotification) {
-      existingNotification.remove();
-    }
-    
     // Create notification element
     const notification = document.createElement('div');
-    notification.className = 'lieblocker-skip-notification';
     notification.style.cssText = `
       position: fixed;
       top: 20px;
       right: 20px;
-      background: linear-gradient(135deg, #4285f4 0%, #1a73e8 100%);
+      background: #4285f4;
       color: white;
-      padding: 16px 20px;
-      border-radius: 12px;
+      padding: 12px 16px;
+      border-radius: 8px;
       font-size: 14px;
       font-weight: 500;
       z-index: 10000;
-      box-shadow: 0 4px 16px rgba(66, 133, 244, 0.3);
-      max-width: 320px;
-      animation: slideInBounce 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      max-width: 300px;
+      animation: slideIn 0.3s ease;
     `;
     
-    const claimText = lie.claim_text || 'Unknown claim';
-    const truncatedClaim = claimText.length > 80 ? claimText.substring(0, 80) + '...' : claimText;
-    
     notification.innerHTML = `
-      <div style="display: flex; align-items: flex-start; gap: 12px;">
-        <div style="font-size: 20px; flex-shrink: 0;">⏭️</div>
-        <div style="flex: 1;">
-          <div style="font-weight: 600; margin-bottom: 4px;">Lie Skipped</div>
-          <div style="font-size: 12px; opacity: 0.9; line-height: 1.4;">${truncatedClaim}</div>
-          <div style="font-size: 11px; opacity: 0.7; margin-top: 4px;">
-            Confidence: ${Math.round((lie.confidence || 0) * 100)}% • 
-            Severity: ${lie.severity || 'medium'}
-          </div>
-        </div>
-      </div>
+      <div style="margin-bottom: 4px;">🚨 Lie Skipped</div>
+      <div style="font-size: 12px; opacity: 0.9;">${lie.claim_text.substring(0, 100)}${lie.claim_text.length > 100 ? '...' : ''}</div>
     `;
     
     document.body.appendChild(notification);
     
-    // Remove notification after 4 seconds
+    // Remove notification after 3 seconds
     skipNotificationTimeout = setTimeout(() => {
       if (notification.parentNode) {
-        notification.style.animation = 'slideOut 0.3s ease-in-out';
+        notification.style.animation = 'slideOut 0.3s ease';
         setTimeout(() => {
           if (notification.parentNode) {
             notification.parentNode.removeChild(notification);
           }
         }, 300);
       }
-    }, 4000);
+    }, 3000);
   }
   
-  // Listen for background messages to update lies
+  // Set up auto-skip when lies are loaded
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'liesUpdate' && message.videoId === currentVideoId) {
       currentLies = message.claims || [];
-      console.log('📋 Updated lies from background:', currentLies.length);
-      
-      // Set up auto-skip if enabled
-      if (skipLiesEnabled && currentLies.length > 0) {
+      if (skipLiesEnabled) {
         setupAutoSkip();
       }
     }
@@ -1462,24 +1150,15 @@ IMPORTANT:
   // Add CSS for animations
   const style = document.createElement('style');
   style.textContent = `
-    @keyframes slideInBounce {
-      0% { transform: translateX(100%) scale(0.8); opacity: 0; }
-      60% { transform: translateX(-10px) scale(1.05); opacity: 1; }
-      100% { transform: translateX(0) scale(1); opacity: 1; }
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
     }
     @keyframes slideOut {
-      0% { transform: translateX(0) scale(1); opacity: 1; }
-      100% { transform: translateX(100%) scale(0.8); opacity: 0; }
+      from { transform: translateX(0); opacity: 1; }
+      to { transform: translateX(100%); opacity: 0; }
     }
   `;
   document.head.appendChild(style);
-  
-  // Clean up on page unload
-  window.addEventListener('beforeunload', () => {
-    cleanupAutoSkip();
-    if (skipNotificationTimeout) {
-      clearTimeout(skipNotificationTimeout);
-    }
-  });
   
 })();
