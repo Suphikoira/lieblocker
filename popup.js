@@ -549,7 +549,7 @@
       }
 
       if (openrouterModelSelect) {
-        openrouterModelSelect.value = settings.openrouterModel || 'meta-llama/llama-3.2-3b-instruct:free';
+        openrouterModelSelect.value = settings.openrouterModel || 'meta-llama/llama-4-maverick-17b-128e-instruct:free';
       }
       
       // API Key - show masked version for security
@@ -697,7 +697,7 @@
         aiProvider: document.getElementById('ai-provider')?.value || 'openai',
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
-        openrouterModel: document.getElementById('openrouter-model')?.value || 'meta-llama/llama-3.2-3b-instruct:free',
+        openrouterModel: document.getElementById('openrouter-model')?.value || 'meta-llama/llama-4-maverick-17b-128e-instruct:free',
         analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 60, // Default to 60 minutes
         minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0, // Default to 0%
         selectedSeverities: selectedSeverities,

@@ -925,7 +925,7 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
     } else if (aiProvider === 'gemini') {
       aiModel = result.geminiModel || 'gemini-2.0-flash-exp';
     } else if (aiProvider === 'openrouter') {
-      aiModel = result.openrouterModel || 'meta-llama/llama-3.2-3b-instruct:free';
+      aiModel = result.openrouterModel || 'meta-llama/llama-4-maverick-17b-128e-instruct:free';
     } else {
       aiModel = result.aiModel || 'gpt-4o-mini';
     }
