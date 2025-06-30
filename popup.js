@@ -700,19 +700,19 @@
         }
       }
       
-      // Analysis Duration - Default to 180 minutes
+      // Analysis Duration - Default to 20 minutes
       const durationSlider = document.getElementById('analysis-duration');
       if (durationSlider) {
-        const savedDuration = settings.analysisDuration || 180; // Default to 180 minutes
+        const savedDuration = settings.analysisDuration || 20; // Default to 20 minutes
         console.log('🔄 Setting analysis duration to:', savedDuration);
         durationSlider.value = savedDuration;
         updateDurationDisplay();
       }
 
-      // Confidence Threshold
+      // Confidence Threshold - Default to 85%
       const confidenceSlider = document.getElementById('min-confidence-threshold');
       if (confidenceSlider) {
-        const savedConfidence = settings.minConfidenceThreshold || 0; // Default to 0%
+        const savedConfidence = settings.minConfidenceThreshold || 85; // Default to 85%
         console.log('🔄 Setting confidence threshold to:', savedConfidence);
         confidenceSlider.value = savedConfidence;
         updateConfidenceDisplay();
@@ -829,8 +829,8 @@
         openaiModel: document.getElementById('openai-model')?.value || 'gpt-4o-mini',
         geminiModel: document.getElementById('gemini-model')?.value || 'gemini-2.0-flash-exp',
         openrouterModel: document.getElementById('openrouter-model')?.value || 'meta-llama/llama-4-maverick-17b-128e-instruct:free',
-        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 180, // Default to 180
-        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 0,
+        analysisDuration: parseInt(document.getElementById('analysis-duration')?.value) || 20, // Default to 20
+        minConfidenceThreshold: parseInt(document.getElementById('min-confidence-threshold')?.value) || 85, // Default to 85%
         selectedSeverities: selectedSeverities,
         skipLiesEnabled: document.getElementById('skip-lies-toggle')?.classList.contains('active') || false
       };

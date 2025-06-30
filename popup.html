@@ -1051,8 +1051,8 @@
           <div class="setting">
             <label for="analysis-duration">Analysis Duration</label>
             <div class="duration-setting">
-              <input type="range" id="analysis-duration" class="duration-input" min="5" max="180" value="180" step="5">
-              <div class="duration-display" id="duration-display">180 min</div>
+              <input type="range" id="analysis-duration" class="duration-input" min="5" max="180" value="20" step="5">
+              <div class="duration-display" id="duration-display">20 min</div>
             </div>
             <div class="setting-description">
               Set how many minutes of the video to analyze. Longer durations provide more comprehensive results but take more time and may cost more.
@@ -1062,11 +1062,11 @@
           <div class="setting">
             <label for="min-confidence-threshold">Minimum Confidence Threshold</label>
             <div class="duration-setting">
-              <input type="range" id="min-confidence-threshold" class="duration-input" min="0" max="100" value="0" step="5">
-              <div class="duration-display" id="confidence-display">0%</div>
+              <input type="range" id="min-confidence-threshold" class="duration-input" min="0" max="100" value="85" step="5">
+              <div class="duration-display" id="confidence-display">85%</div>
             </div>
             <div class="setting-description">
-              Set the minimum confidence level required to flag a lie. Lower values will detect more potential lies but may include false positives. Higher values are more strict but may miss some lies.
+              Set the minimum confidence level required to flag a lie. Higher values are more strict but may miss some lies. Lower values will detect more potential lies but may include false positives.
             </div>
           </div>
         </div>
