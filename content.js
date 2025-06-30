@@ -17,6 +17,65 @@
   let videoPlayer = null;
   let skipNotificationTimeout = null;
   let securityService = null;
+  let extensionContextValid = true;
+  
+  // Check if extension context is still valid
+  function checkExtensionContext() {
+    try {
+      // Try to access chrome.runtime.id - this will throw if context is invalid
+      const id = chrome.runtime.id;
+      if (!id) {
+        extensionContextValid = false;
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.warn('⚠️ Extension context invalidated:', error.message);
+      extensionContextValid = false;
+      return false;
+    }
+  }
+  
+  // Safe message sending with context validation
+  async function safeSendMessage(message) {
+    if (!checkExtensionContext()) {
+      console.warn('⚠️ Cannot send message - extension context invalidated');
+      return null;
+    }
+    
+    try {
+      return await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          reject(new Error('Message timeout'));
+        }, 5000);
+        
+        chrome.runtime.sendMessage(message, (response) => {
+          clearTimeout(timeout);
+          
+          if (chrome.runtime.lastError) {
+            // Check if it's a context invalidation error
+            if (chrome.runtime.lastError.message.includes('Extension context invalidated')) {
+              extensionContextValid = false;
+              console.warn('⚠️ Extension context invalidated during message send');
+              resolve(null);
+            } else {
+              reject(new Error(chrome.runtime.lastError.message));
+            }
+            return;
+          }
+          
+          resolve(response);
+        });
+      });
+    } catch (error) {
+      if (error.message.includes('Extension context invalidated')) {
+        extensionContextValid = false;
+        console.warn('⚠️ Extension context invalidated:', error.message);
+        return null;
+      }
+      throw error;
+    }
+  }
   
   // Initialize when DOM is ready
   if (document.readyState === 'loading') {
@@ -27,6 +86,12 @@
   
   function initialize() {
     console.log('🎬 Initializing LieBlocker on YouTube');
+    
+    // Check extension context before proceeding
+    if (!checkExtensionContext()) {
+      console.warn('⚠️ Extension context invalid during initialization - content script may need to be reloaded');
+      return;
+    }
     
     // Initialize security service if available
     if (typeof SecurityService !== 'undefined') {
@@ -102,6 +167,13 @@
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       console.log('📨 Content script received message:', message.type);
       
+      // Check extension context before processing
+      if (!checkExtensionContext()) {
+        console.warn('⚠️ Cannot process message - extension context invalidated');
+        sendResponse({ success: false, error: 'Extension context invalidated' });
+        return false;
+      }
+      
       try {
         if (message.type === 'ping') {
           // Respond to ping messages to confirm content script is loaded and responsive
@@ -142,21 +214,26 @@
     try {
       isAnalyzing = true;
       
+      // Check extension context before starting
+      if (!checkExtensionContext()) {
+        throw new Error('Extension context invalidated - please refresh the page');
+      }
+      
       // Notify background that analysis is starting
-      chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'startAnalysis',
         videoId: videoId
       });
       
       // Send initial progress
-      chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'analysisProgress',
         stage: 'starting',
         message: 'Starting video analysis...'
       });
       
       // CRITICAL: Check API key before proceeding with analysis
-      chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'analysisProgress',
         stage: 'validation',
         message: 'Validating API configuration...'
@@ -181,14 +258,14 @@
         
         currentLies = cachedResults.lies || [];
         
-        chrome.runtime.sendMessage({
+        await safeSendMessage({
           type: 'liesUpdate',
           claims: currentLies,
           videoId: videoId,
           isComplete: true
         });
         
-        chrome.runtime.sendMessage({
+        await safeSendMessage({
           type: 'analysisResult',
           data: `Analysis loaded from cache. Found ${currentLies.length} lies.`
         });
@@ -199,7 +276,7 @@
       }
       
       // Extract transcript with auto-generated priority
-      chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'analysisProgress',
         stage: 'transcript',
         message: 'Extracting video transcript...'
@@ -216,7 +293,7 @@
       const videoData = await getVideoMetadata();
       
       // Analyze transcript with AI
-      chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'analysisProgress',
         stage: 'analysis',
         message: 'Analyzing transcript for lies...'
@@ -231,14 +308,14 @@
       currentLies = analysisResults.lies || [];
       
       // Send final results
-      chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'liesUpdate',
         claims: currentLies,
         videoId: videoId,
         isComplete: true
       });
       
-      chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'analysisResult',
         data: `Analysis complete. Found ${currentLies.length} lies.`
       });
@@ -249,7 +326,7 @@
     } catch (error) {
       console.error('❌ Analysis failed:', error);
       
-      chrome.runtime.sendMessage({
+      await safeSendMessage({
         type: 'analysisResult',
         data: `Error: ${error.message}`
       });
@@ -867,18 +944,26 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
       }
     }
     
-    // Get regular settings from Chrome storage
-    const result = await new Promise((resolve) => {
-      chrome.storage.local.get([
-        'aiProvider',
-        'openaiModel',
-        'geminiModel',
-        'openrouterModel',
-        'apiKey', // Fallback for existing users
-        'analysisDuration',
-        'minConfidenceThreshold'
-      ], resolve);
-    });
+    // Get regular settings from Chrome storage with safe access
+    let result = {};
+    try {
+      if (checkExtensionContext()) {
+        result = await new Promise((resolve) => {
+          chrome.storage.local.get([
+            'aiProvider',
+            'openaiModel',
+            'geminiModel',
+            'openrouterModel',
+            'apiKey', // Fallback for existing users
+            'analysisDuration',
+            'minConfidenceThreshold'
+          ], resolve);
+        });
+      }
+    } catch (error) {
+      console.warn('⚠️ Could not access Chrome storage:', error);
+      result = {};
+    }
     
     // Determine the correct model based on provider
     let aiModel;
@@ -924,7 +1009,11 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
         }
       }
       
-      // Fallback to local storage
+      // Fallback to local storage with safe access
+      if (!checkExtensionContext()) {
+        return null;
+      }
+      
       const result = await new Promise(resolve => {
         chrome.storage.local.get([`analysis_${videoId}`], resolve);
       });
@@ -966,16 +1055,18 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
         }
       }
       
-      // Also store locally as backup
-      const cacheData = {
-        lies: analysisResults.lies,
-        timestamp: Date.now(),
-        videoData: videoData
-      };
-      
-      chrome.storage.local.set({
-        [`analysis_${videoId}`]: cacheData
-      });
+      // Also store locally as backup with safe access
+      if (checkExtensionContext()) {
+        const cacheData = {
+          lies: analysisResults.lies,
+          timestamp: Date.now(),
+          videoData: videoData
+        };
+        
+        chrome.storage.local.set({
+          [`analysis_${videoId}`]: cacheData
+        });
+      }
       
     } catch (error) {
       console.error('❌ Error storing analysis results:', error);
@@ -985,12 +1076,16 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
   
   async function loadCurrentVideoLies(videoId) {
     try {
+      // Check extension context before attempting communication
+      if (!checkExtensionContext()) {
+        console.warn('⚠️ Extension context invalid - cannot load current video lies');
+        return;
+      }
+      
       // First try to get from background script
-      const response = await new Promise((resolve) => {
-        chrome.runtime.sendMessage({
-          type: 'getCurrentVideoLies',
-          videoId: videoId
-        }, resolve);
+      const response = await safeSendMessage({
+        type: 'getCurrentVideoLies',
+        videoId: videoId
       });
       
       if (response && response.success && response.lies) {
@@ -1012,12 +1107,20 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
   }
   
   async function loadSkipLiesSetting() {
-    const result = await new Promise(resolve => {
-      chrome.storage.local.get(['skipLiesEnabled'], resolve);
-    });
-    
-    skipLiesEnabled = result.skipLiesEnabled || false;
-    console.log('⏭️ Skip lies setting loaded:', skipLiesEnabled);
+    try {
+      if (!checkExtensionContext()) {
+        return;
+      }
+      
+      const result = await new Promise(resolve => {
+        chrome.storage.local.get(['skipLiesEnabled'], resolve);
+      });
+      
+      skipLiesEnabled = result.skipLiesEnabled || false;
+      console.log('⏭️ Skip lies setting loaded:', skipLiesEnabled);
+    } catch (error) {
+      console.error('❌ Error loading skip lies setting:', error);
+    }
   }
   
   function jumpToTimestamp(timestamp) {
@@ -1053,8 +1156,8 @@ IMPORTANT: Only return the JSON object. Do not include any other text.`;
           // Show skip notification
           showSkipNotification(lie);
           
-          // Track skip for statistics
-          chrome.runtime.sendMessage({
+          // Track skip for statistics with safe message sending
+          safeSendMessage({
             type: 'lieSkipped',
             videoId: currentVideoId,
             timestamp: startTime,
