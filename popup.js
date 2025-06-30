@@ -550,17 +550,35 @@
       markPendingSave();
       await saveSettingsImmediately();
       
-      // Notify content script
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tabs && tabs.length > 0) {
-        try {
-          await sendMessageWithTimeout(tabs[0].id, {
-            type: 'skipLiesToggle',
-            enabled: newState
-          }, 5000);
-        } catch (error) {
-          console.warn('Could not notify content script about skip toggle:', error);
+      // Try to notify content script, but don't fail if it's not available
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs && tabs.length > 0) {
+          const tab = tabs[0];
+          
+          // Check if we're on YouTube first
+          if (tab.url && tab.url.includes('youtube.com/watch')) {
+            // Try to ensure content script is loaded
+            const contentScriptReady = await ensureContentScriptLoaded(tab.id);
+            
+            if (contentScriptReady) {
+              await sendMessageWithTimeout(tab.id, {
+                type: 'skipLiesToggle',
+                enabled: newState
+              }, 3000); // Shorter timeout for this non-critical operation
+              
+              console.log('✅ Successfully notified content script about skip toggle');
+            } else {
+              console.warn('⚠️ Content script not available, skip toggle saved but not applied to current video');
+            }
+          } else {
+            console.log('ℹ️ Not on YouTube, skip toggle saved for future use');
+          }
         }
+      } catch (error) {
+        // Log the warning but don't show it to user since the setting was still saved
+        console.warn('Could not notify content script about skip toggle:', error.message);
+        // The setting is still saved, so this is not a critical error
       }
       
       showNotification(
