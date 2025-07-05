@@ -30,16 +30,8 @@
   
   // Supabase configuration for public collaborative project
   // These credentials are intentionally public for community contributions
-  const SUPABASE_URL = 'YOUR_SUPABASE_PROJECT_URL';
-  const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
-  
-  // Validate configuration for development
-  if (SUPABASE_URL === 'YOUR_SUPABASE_PROJECT_URL' || SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY') {
-    console.error('🚨 LieBlocker Configuration: Using placeholder credentials');
-    console.info('ℹ️ For production, replace with actual Supabase project credentials');
-    console.info('📚 See setup instructions in README.md');
-    // Don't return early - allow development to continue with placeholders
-  }
+  const SUPABASE_URL = 'https://cwetzwmfddegeihmmlnv.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3ZXR6d21mZGRlZ2VpaG1tbG52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk5MjU0ODAsImV4cCI6MjA2NTUwMTQ4MH0.gpDQ3Bw-lfQbmGsLbIWbi2LiDijW_HEmbIs2-4GAEwk';
   
   // Simple Supabase client implementation for Chrome extension with security features
   class SimpleSupabaseClient {
