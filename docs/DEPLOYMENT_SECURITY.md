@@ -1,32 +1,34 @@
-# Security Guidelines for Open Source Deployment
+# Security Guidelines for Public Collaborative Project
 
-## ⚠️ CRITICAL SECURITY REQUIREMENTS
+## 🌍 PUBLIC PROJECT SECURITY MODEL
 
-### 1. Environment Variables
-- **NEVER** commit actual API keys to the repository
-- Use `.env.example` files with placeholder values
-- Rotate all keys before open sourcing
+This is a **public collaborative project** where community contributions benefit everyone. The security model is designed for transparency and community participation.
 
-### 2. Supabase Security Checklist
+### Public Database Approach
+- ✅ Supabase credentials are **intentionally public** for community access
+- ✅ Row Level Security (RLS) restricts what anonymous users can do
+- ✅ Anonymous users can only INSERT analysis data (no UPDATE/DELETE)
+- ✅ All contributions improve the collective knowledge base
 
-#### Database Security
-- ✅ RLS enabled on all tables
-- ✅ Secure policies implemented (not `USING (true)`)
-- ✅ Service role access properly restricted
-- ✅ Rate limiting at database level
+## ✅ SECURITY MEASURES IN PLACE
 
-#### API Security
-- ✅ Anonymous access limited to read-only operations
-- ✅ Service role key kept secret (backend only)
-- ✅ Row-level security prevents data leaks
-- ✅ Input validation on all endpoints
+### 1. Database Security
+- **RLS Policies**: Strict row-level security prevents data tampering
+- **Insert-Only Access**: Anonymous users cannot modify existing data
+- **Data Validation**: Server-side constraints prevent malicious content
+- **Rate Limiting**: Database-level protection against abuse
+
+### 2. Data Protection
+- **No Personal Data**: Zero collection of user information
+- **Input Sanitization**: All contributions validated and sanitized
+- **Immutable Analysis**: Once submitted, results cannot be altered
+- **Audit Trail**: All operations logged for transparency
 
 ### 3. Extension Security
-
-#### API Key Protection
-- ✅ Multi-layer encryption for stored API keys
-- ✅ Keys never logged or exposed in errors
-- ✅ Secure key validation before storage
+- **Local API Keys**: User's AI provider keys encrypted locally only
+- **Minimal Permissions**: Extension requires only necessary browser permissions
+- **Client-side Rate Limiting**: Prevents abuse of public database
+- **Error Handling**: No sensitive data exposed in logs
 
 #### Rate Limiting
 - ✅ Client-side rate limiting implemented

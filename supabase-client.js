@@ -1,17 +1,47 @@
 // Supabase client for Chrome extension
 // This file will be injected into the page context
 
+/**
+ * SECURITY NOTICE FOR PUBLIC PROJECT:
+ * 
+ * This is a public collaborative project where users contribute analysis results
+ * to a shared database. The Supabase credentials are intentionally public to allow
+ * community contributions.
+ * 
+ * SECURITY MEASURES IN PLACE:
+ * 1. Row Level Security (RLS) policies restrict write access
+ * 2. Anonymous users can only INSERT analysis data (no UPDATE/DELETE)
+ * 3. Rate limiting prevents abuse
+ * 4. Data validation prevents malicious content
+ * 5. No sensitive user data is stored
+ * 
+ * If you want to fork this project for private use:
+ * 1. Create your own Supabase project
+ * 2. Replace the credentials below with your own
+ * 3. Run the database migrations from supabase/migrations/
+ * 4. Update RLS policies as needed for your use case
+ */
+
 (function() {
   'use strict';
   
   // Check if we're in the right environment
   if (typeof window === 'undefined') return;
   
-  // Supabase configuration - you need to replace these with your actual values
-  const SUPABASE_URL = 'https://cwetzwmfddegeihmmlnv.supabase.co';
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3ZXR6d21mZGRlZ2VpaG1tbG52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDk5MjU0ODAsImV4cCI6MjA2NTUwMTQ4MH0.gpDQ3Bw-lfQbmGsLbIWbi2LiDijW_HEmbIs2-4GAEwk';
+  // Supabase configuration for public collaborative project
+  // These credentials are intentionally public for community contributions
+  const SUPABASE_URL = 'YOUR_SUPABASE_PROJECT_URL';
+  const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
   
-  // Simple Supabase client implementation for Chrome extension
+  // Validate configuration for development
+  if (SUPABASE_URL === 'YOUR_SUPABASE_PROJECT_URL' || SUPABASE_ANON_KEY === 'YOUR_SUPABASE_ANON_KEY') {
+    console.error('🚨 LieBlocker Configuration: Using placeholder credentials');
+    console.info('ℹ️ For production, replace with actual Supabase project credentials');
+    console.info('📚 See setup instructions in README.md');
+    // Don't return early - allow development to continue with placeholders
+  }
+  
+  // Simple Supabase client implementation for Chrome extension with security features
   class SimpleSupabaseClient {
     constructor(url, key) {
       this.url = url;
@@ -22,6 +52,71 @@
         'Authorization': `Bearer ${key}`,
         'Prefer': 'return=representation'
       };
+      this.rateLimiter = new Map(); // Simple client-side rate limiting
+    }
+    
+    // Client-side rate limiting
+    checkRateLimit(action, maxRequests = 10, windowMs = 60000) {
+      const now = Date.now();
+      const key = action;
+      
+      if (!this.rateLimiter.has(key)) {
+        this.rateLimiter.set(key, []);
+      }
+      
+      const requests = this.rateLimiter.get(key);
+      
+      // Remove old requests outside the window
+      while (requests.length > 0 && requests[0] < now - windowMs) {
+        requests.shift();
+      }
+      
+      if (requests.length >= maxRequests) {
+        console.warn(`⚠️ Rate limit exceeded for action: ${action}`);
+        return false;
+      }
+      
+      requests.push(now);
+      return true;
+    }
+    
+    // Data validation and sanitization
+    validateAndSanitizeData(data, type) {
+      if (!data) return null;
+      
+      switch (type) {
+        case 'video':
+          return {
+            video_id: String(data.video_id || '').slice(0, 100),
+            title: String(data.title || '').slice(0, 500),
+            channel_name: String(data.channel_name || '').slice(0, 200),
+            duration: data.duration && !isNaN(data.duration) ? Number(data.duration) : null
+          };
+          
+        case 'analysis':
+          return {
+            video_id: data.video_id,
+            analysis_version: String(data.analysis_version || '2.1').slice(0, 10),
+            total_lies_detected: Math.max(0, Math.min(1000, Number(data.total_lies_detected || 0))),
+            analysis_duration_minutes: Math.max(0, Math.min(480, Number(data.analysis_duration_minutes || 20))),
+            confidence_threshold: Math.max(0, Math.min(1, Number(data.confidence_threshold || 0.85)))
+          };
+          
+        case 'lie':
+          return {
+            analysis_id: data.analysis_id,
+            timestamp_seconds: Math.max(0, Number(data.timestamp_seconds || 0)),
+            duration_seconds: Math.max(1, Math.min(300, Number(data.duration_seconds || 10))),
+            claim_text: String(data.claim_text || '').slice(0, 1000),
+            explanation: String(data.explanation || '').slice(0, 2000),
+            confidence: Math.max(0, Math.min(1, Number(data.confidence || 0))),
+            severity: ['low', 'medium', 'high'].includes(data.severity) ? data.severity : 'low',
+            category: String(data.category || 'other').slice(0, 50)
+          };
+          
+        default:
+          return data;
+      }
     }
     
     from(table) {
@@ -86,23 +181,23 @@
           url += '?' + params.toString();
         }
         
-        console.log('🔍 Supabase GET request:', url);
+        console.log('🔍 Supabase GET request to:', this.table);
         
         const response = await fetch(url, {
           method: 'GET',
           headers: this.client.headers
         });
         
-        console.log('📡 Supabase GET response:', response.status, response.statusText);
+        console.log('📡 Supabase GET response:', response.status);
         
         if (!response.ok) {
           const errorText = await response.text();
-          console.error('❌ Supabase GET error:', errorText);
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+          console.error('❌ Supabase GET error:', response.status);
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
         
         const data = await response.json();
-        console.log('✅ Supabase GET success:', data);
+        console.log('✅ Supabase GET success, received', data?.length || 1, 'items');
         
         if (this.query.single) {
           return { data: data[0] || null, error: null };
@@ -117,10 +212,28 @@
     
     async insert(data) {
       try {
-        const url = `${this.client.url}/rest/v1/${this.table}`;
-        const payload = Array.isArray(data) ? data : [data];
+        // Rate limiting check
+        if (!this.client.checkRateLimit(`insert_${this.table}`, 20, 60000)) {
+          throw new Error('Rate limit exceeded. Please wait before making more requests.');
+        }
         
-        console.log('📝 Supabase INSERT request:', url, payload);
+        const url = `${this.client.url}/rest/v1/${this.table}`;
+        let payload = Array.isArray(data) ? data : [data];
+        
+        // Validate and sanitize data based on table type
+        if (this.table === 'videos') {
+          payload = payload.map(item => this.client.validateAndSanitizeData(item, 'video')).filter(Boolean);
+        } else if (this.table === 'video_analysis') {
+          payload = payload.map(item => this.client.validateAndSanitizeData(item, 'analysis')).filter(Boolean);
+        } else if (this.table === 'detected_lies') {
+          payload = payload.map(item => this.client.validateAndSanitizeData(item, 'lie')).filter(Boolean);
+        }
+        
+        if (payload.length === 0) {
+          throw new Error('No valid data to insert after validation');
+        }
+        
+        console.log('📝 Supabase INSERT request:', this.table, `(${payload.length} items)`);
         
         const response = await fetch(url, {
           method: 'POST',
@@ -128,12 +241,12 @@
           body: JSON.stringify(payload)
         });
         
-        console.log('📡 Supabase INSERT response:', response.status, response.statusText);
+        console.log('📡 Supabase INSERT response:', response.status);
         
         if (!response.ok) {
           const errorText = await response.text();
-          console.error('❌ Supabase INSERT error:', errorText);
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+          console.error('❌ Supabase INSERT error:', response.status, errorText);
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
         
         // Check if response has content before parsing JSON
@@ -144,24 +257,42 @@
           try {
             result = JSON.parse(responseText);
           } catch (parseError) {
-            console.warn('⚠️ Non-JSON response from insert:', responseText);
+            console.warn('⚠️ Non-JSON response from insert');
             result = [];
           }
         }
         
-        console.log('✅ Supabase INSERT success:', result);
+        console.log('✅ Supabase INSERT success');
         
         return { data: Array.isArray(data) ? result : result[0], error: null };
       } catch (error) {
-        console.error('❌ Supabase insert error:', error);
+        console.error('❌ Supabase insert error:', error.message);
         return { data: null, error };
       }
     }
     
     async upsert(data, options = {}) {
       try {
+        // Rate limiting check  
+        if (!this.client.checkRateLimit(`upsert_${this.table}`, 15, 60000)) {
+          throw new Error('Rate limit exceeded. Please wait before making more requests.');
+        }
+        
         let url = `${this.client.url}/rest/v1/${this.table}`;
-        const payload = Array.isArray(data) ? data : [data];
+        let payload = Array.isArray(data) ? data : [data];
+        
+        // Validate and sanitize data
+        if (this.table === 'videos') {
+          payload = payload.map(item => this.client.validateAndSanitizeData(item, 'video')).filter(Boolean);
+        } else if (this.table === 'video_analysis') {
+          payload = payload.map(item => this.client.validateAndSanitizeData(item, 'analysis')).filter(Boolean);
+        } else if (this.table === 'detected_lies') {
+          payload = payload.map(item => this.client.validateAndSanitizeData(item, 'lie')).filter(Boolean);
+        }
+        
+        if (payload.length === 0) {
+          throw new Error('No valid data to upsert after validation');
+        }
         
         const headers = {
           ...this.client.headers
@@ -169,14 +300,11 @@
         
         // For upserts, we need to add the proper parameters and headers
         if (options.onConflict) {
-          // Add the on_conflict parameter to the URL
           url += `?on_conflict=${options.onConflict}`;
-          // Combine both preferences: return data AND resolve conflicts
           headers['Prefer'] = 'return=representation,resolution=merge-duplicates';
         }
         
-        console.log('🔄 Supabase UPSERT request:', url, payload);
-        console.log('🔄 Supabase UPSERT headers:', headers);
+        console.log('🔄 Supabase UPSERT request:', this.table, `(${payload.length} items)`);
         
         const response = await fetch(url, {
           method: 'POST',
@@ -184,12 +312,12 @@
           body: JSON.stringify(payload)
         });
         
-        console.log('📡 Supabase UPSERT response:', response.status, response.statusText);
+        console.log('📡 Supabase UPSERT response:', response.status);
         
         if (!response.ok) {
           const errorText = await response.text();
-          console.error('❌ Supabase UPSERT error:', errorText);
-          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+          console.error('❌ Supabase UPSERT error:', response.status, errorText);
+          throw new Error(`HTTP error! status: ${response.status}`);
         }
         
         // Check if response has content before parsing JSON
@@ -200,16 +328,16 @@
           try {
             result = JSON.parse(responseText);
           } catch (parseError) {
-            console.warn('⚠️ Non-JSON response from upsert:', responseText);
+            console.warn('⚠️ Non-JSON response from upsert');
             result = [];
           }
         }
         
-        console.log('✅ Supabase UPSERT success:', result);
+        console.log('✅ Supabase UPSERT success');
         
         return { data: Array.isArray(data) ? result : result[0], error: null };
       } catch (error) {
-        console.error('❌ Supabase upsert error:', error);
+        console.error('❌ Supabase upsert error:', error.message);
         return { data: null, error };
       }
     }

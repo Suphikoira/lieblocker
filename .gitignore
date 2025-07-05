@@ -1,2 +1,12 @@
 node_modules/
+dist/
 .env
+.env.local
+.env.development
+.env.test
+.env.production
+*.env
+.DS_Store
+*.log
+chrome-extension.zip
+.vscode/settings.json

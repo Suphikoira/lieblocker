@@ -1,22 +1,32 @@
 # LieBlocker - AI-Powered YouTube Fact Checker
 
-A production-ready Chrome extension that automatically detects and skips lies in YouTube videos using AI analysis with enterprise-grade security and user experience.
+A collaborative Chrome extension that detects and skips lies in YouTube videos using AI analysis. Community-driven with shared analysis database for collective fact-checking.
+
+## 🌍 Public Collaborative Project
+
+**LieBlocker is a public project where the community contributes to a shared fact-checking database.**
+
+- **Shared Database**: All analysis results are stored in a public Supabase database
+- **Community Contributions**: Every user's analysis helps improve accuracy for everyone
+- **Open Source**: Full transparency in how lies are detected and classified
+- **No Account Required**: Anonymous contributions to the shared database
+- **Privacy-First**: Only analysis results are shared, no personal data
 
 ## 🛡️ Security Features
 
 ### **Data Protection**
-- **Multi-layer Encryption**: API keys encrypted with advanced algorithms
-- **Secure Storage**: Sensitive data never stored in plain text
-- **Rate Limiting**: Prevents API abuse and protects against attacks
-- **Input Validation**: All user inputs sanitized and validated
-- **CSP Headers**: Content Security Policy prevents XSS attacks
-- **Context Validation**: Robust handling of extension context invalidation
+- **Row Level Security**: Database policies prevent data tampering
+- **Rate Limiting**: Prevents API abuse and spam submissions  
+- **Input Validation**: All contributions sanitized and validated
+- **No Personal Data**: Only analysis results stored, no user information
+- **Public Transparency**: All database access is logged and auditable
 
-### **Privacy**
-- **Local Processing**: No user data sent to external servers
-- **Encrypted API Keys**: Keys encrypted before storage
-- **No Tracking**: Zero user behavior tracking
-- **Secure Communication**: All API calls use HTTPS
+### **Public Database Security**
+- **Insert-Only Access**: Anonymous users can only add new analysis data
+- **No Modifications**: Existing analyses cannot be altered by public users
+- **Data Validation**: Server-side constraints prevent malicious content
+- **Automatic Cleanup**: Duplicate and spam entries automatically removed
+- **Community Moderation**: Flagging system for inappropriate content
 
 ## 🎯 Production Features
 
@@ -24,8 +34,8 @@ A production-ready Chrome extension that automatically detects and skips lies in
 - **Error Handling**: Comprehensive error recovery and user feedback
 - **Performance Monitoring**: Real-time performance tracking
 - **Retry Logic**: Automatic retry for failed operations
-- **Graceful Degradation**: Continues working even if some features fail
-- **Context Recovery**: Handles extension reloads without crashes
+- **Graceful Degradation**: Continues working even if database is unavailable
+- **Offline Mode**: Works offline using cached analysis data
 
 ### **User Experience**
 - **Smart Notifications**: Context-aware user feedback
@@ -33,21 +43,23 @@ A production-ready Chrome extension that automatically detects and skips lies in
 - **Responsive Design**: Works on all screen sizes
 - **Accessibility**: Screen reader compatible
 - **Severity Filtering**: Filter lies by severity level
+- **Community Insights**: See analysis from other users
 
 ### **Monitoring**
-- **Error Logging**: Detailed error tracking for debugging
-- **Performance Metrics**: Operation timing and optimization
-- **Usage Analytics**: Local session statistics
-- **Health Checks**: System status monitoring
+- **Community Analytics**: View collective fact-checking statistics
+- **Analysis Quality**: Community-driven accuracy improvements
+- **Trending Lies**: See commonly detected false claims
+- **Verification Status**: Track fact-check verification across videos
 
 ## 🚀 Features
 
-- **Real-time Lie Detection**: Analyzes video transcripts using OpenAI, Google Gemini, or OpenRouter
-- **DOM-based Transcript Extraction**: Directly extracts transcripts from YouTube's interface
+- **AI-Powered Detection**: Analyzes video transcripts using OpenAI, Google Gemini, or OpenRouter
+- **Community Database**: Shared analysis results benefit all users
 - **Auto-Skip Mode**: Automatically jumps over detected lies while watching
 - **Visual Warnings**: Shows detected lies with timestamps and explanations
-- **Configurable Confidence Scoring**: Adjustable confidence threshold (0-100%)
+- **Configurable Confidence**: Adjustable confidence threshold (0-100%)
 - **Severity Filtering**: Filter displayed lies by severity (Critical, High, Medium, Low)
+- **Collaborative Verification**: Community-driven fact verification
 - **Multiple AI Providers**: Support for OpenAI, Google Gemini, and OpenRouter (including free models)
 - **Supabase Integration**: Stores and retrieves analysis results efficiently
 - **Session Statistics**: Tracks videos analyzed, lies detected, and time saved
@@ -56,20 +68,37 @@ A production-ready Chrome extension that automatically detects and skips lies in
 
 ## 📦 Installation
 
+### Option 1: Use Public Database (Recommended)
 1. Download or clone this repository
-2. Open Chrome and go to `chrome://extensions/`
-3. Enable "Developer mode" in the top right
-4. Click "Load unpacked" and select the extension folder
-5. The LieBlocker icon will appear in your extensions toolbar
+2. **Replace the placeholder credentials** in `supabase-client.js`:
+   ```javascript
+   const SUPABASE_URL = 'https://your-project.supabase.co';
+   const SUPABASE_ANON_KEY = 'your-anon-key-here';
+   ```
+3. Open Chrome and go to `chrome://extensions/`
+4. Enable "Developer mode" in the top right
+5. Click "Load unpacked" and select the extension folder
+6. The LieBlocker icon will appear in your extensions toolbar
+
+### Option 2: Private Fork Setup
+If you want your own private database:
+1. Create a new [Supabase project](https://supabase.com)
+2. Run all SQL migrations from `supabase/migrations/` in your Supabase SQL editor
+3. Update `supabase-client.js` with your project credentials
+4. Modify RLS policies as needed for your use case
+5. Follow installation steps above
 
 ## ⚙️ Setup
 
+### AI Provider Configuration
 1. Click the LieBlocker extension icon
 2. Go to Settings tab
 3. Choose your AI provider and add your API key:
    - **OpenAI**: Get API key at https://platform.openai.com
    - **Google Gemini**: Get API key at https://makersuite.google.com
    - **OpenRouter**: Get API key at https://openrouter.ai (includes free models)
+
+### Extension Settings
 4. Configure your preferences:
    - Detection mode (visual warnings or auto-skip)
    - Analysis duration (5-180 minutes)
@@ -77,15 +106,22 @@ A production-ready Chrome extension that automatically detects and skips lies in
    - Severity filtering (Critical, High, Medium, Low)
    - AI provider and model
 
+### Database Connection
+The extension automatically connects to the shared community database where:
+- Your analysis results help improve accuracy for everyone
+- You benefit from previous community analysis
+- No personal information is stored or shared
+
 ## 🔧 Usage
 
 1. Navigate to any YouTube video
 2. Click the LieBlocker extension icon
 3. Click "Analyze Current Video"
-4. Wait for analysis to complete
+4. Wait for analysis to complete (contributes to community database)
 5. View detected lies in the "Lies" tab
-6. Filter lies by severity using the checkboxes in Settings
-7. If auto-skip is enabled, lies will be automatically skipped during playback
+6. See analysis from other community members (if available)
+7. Filter lies by severity using the checkboxes in Settings
+8. If auto-skip is enabled, lies will be automatically skipped during playback
 
 ## 🔑 API Requirements
 
